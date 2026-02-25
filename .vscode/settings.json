@@ -1,0 +1,14 @@
+{
+    "editor.formatOnSave": true,
+    "files.autoSave": "afterDelay",
+    "workbench.panel.defaultLocation": "right",
+    "rust-analyzer.linkedProjects": [
+        "solver/Cargo.toml"
+    ],
+    "tasks.statusbar": {
+        "Run Visualizer": {
+            "label": "$(play) Run Visualizer",
+            "tooltip": "スコア計算を実行"
+        }
+    }
+}

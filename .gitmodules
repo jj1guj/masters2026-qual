@@ -1,0 +1,3 @@
+[submodule "ahc_score_visualizer"]
+	path = ahc_score_visualizer
+	url = https://github.com/jj1guj/ahc_score_visualizer

@@ -1,0 +1,19 @@
+# Build artifacts
+target/
+/target
+Cargo.lock
+
+# Tools and results (from contest and outputs)
+/tools/
+/results/
+
+# IDEs
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+*.zip
+
+.venv/

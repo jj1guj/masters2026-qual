@@ -1,0 +1,89 @@
+name: Score Calculation
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Download and prepare tools
+        run: bash scripts/prepare_tools.sh
+
+      - name: Run score visualizer
+        run: bash scripts/run_score.sh
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contest-results
+          path: results/
+          retention-days: 30
+
+      - name: Parse scores, comment, and update PR title
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            let scoreComment = '## Score Report\n\n';
+            let score = null;
+            
+            const indexPath = path.join(process.env.GITHUB_WORKSPACE, 'results/index.html');
+            if (fs.existsSync(indexPath)) {
+              const content = fs.readFileSync(indexPath, 'utf8');
+              // Extract total score from HTML (format: "Total Score: 123456")
+              const scoreMatch = content.match(/Total Score:\s*([\d,]+)/);
+              if (scoreMatch) {
+                score = scoreMatch[1];
+                scoreComment += `**Total Score: ${score}**\n\n`;
+              }
+              
+              scoreComment += `[View full results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`;
+            } else {
+              scoreComment += 'Results not available. Check the workflow for errors.';
+            }
+            
+            // Comment on PR
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: scoreComment
+            });
+            
+            // Update PR title to include score so it appears in the merge commit
+            if (score) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
+              
+              // Remove existing score tag if present, then append new one
+              const titleWithoutScore = pr.title.replace(/\s*\[Score:\s*[\d,]+\]\s*$/, '');
+              const newTitle = `${titleWithoutScore} [Score: ${score}]`;
+              
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                title: newTitle
+              });
+            }
