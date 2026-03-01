@@ -1,7 +1,10 @@
 use ac_library::MfGraph;
 use proconio::input;
+use rand::prelude::*;
+use std::time::Instant;
 
 const N: usize = 20;
+const SA_TIME_LIMIT_MS: u128 = 1000; // SA time budget in ms
 
 // Direction: 0=U, 1=R, 2=D, 3=L
 const DI: [i32; 4] = [-1, 0, 1, 0];
@@ -262,7 +265,7 @@ impl Solver {
         let no_cover = vec![vec![false; n]; n];
         let (vc_robots_pure, vc_cost_pure) = self.vertex_cover_for_uncovered(&no_cover);
 
-        // === Approach 2: Greedy multi-snake + VC ===
+        // === Approach 2: Greedy multi-snake + VC (initial solution for SA) ===
         let mut selected: Vec<usize> = Vec::new();
         let mut combined = vec![vec![false; n]; n];
         let mut snake_states: i64 = 0;
@@ -273,7 +276,6 @@ impl Solver {
             let mut best_total: i64 = current_cost;
 
             for ci in 0..num_candidates {
-                // Count new cells this candidate would add
                 let mut new_cells = 0usize;
                 for i in 0..n {
                     for j in 0..n {
@@ -282,12 +284,10 @@ impl Solver {
                         }
                     }
                 }
-                // Prune: need at least a few new cells
                 if new_cells < 3 {
                     continue;
                 }
 
-                // Compute VC cost with this candidate's coverage added
                 let auto_states = automata[cand_auto[ci]].len();
                 let mut merged = combined.clone();
                 for i in 0..n {
@@ -324,98 +324,117 @@ impl Solver {
             }
         }
 
-        // === Swap optimization ===
-        // Try removing each selected snake and replacing with a different candidate
-        let mut improved = true;
-        while improved {
-            improved = false;
-            for si in 0..selected.len() {
-                // Recompute combined without selected[si]
-                let mut combined_without = vec![vec![false; n]; n];
-                let mut states_without: i64 = 0;
-                for (sj, &cj) in selected.iter().enumerate() {
-                    if sj == si {
-                        continue;
-                    }
-                    states_without += automata[cand_auto[cj]].len() as i64;
-                    for i in 0..n {
-                        for j in 0..n {
-                            if cand_covered[cj][i][j] {
-                                combined_without[i][j] = true;
-                            }
-                        }
-                    }
-                }
-
-                let (_, vc_without) = self.vertex_cover_for_uncovered(&combined_without);
-                let cost_without = states_without + vc_without;
-
-                // Try replacing with each candidate
-                let mut best_replacement: Option<usize> = None;
-                let mut best_cost = current_cost;
-
-                // Also try just removing (no replacement)
-                if cost_without < best_cost {
-                    best_cost = cost_without;
-                    best_replacement = Some(usize::MAX); // sentinel for "just remove"
-                }
-
-                for ci in 0..num_candidates {
-                    let auto_states = automata[cand_auto[ci]].len();
-                    let mut new_cells = 0usize;
-                    for i in 0..n {
-                        for j in 0..n {
-                            if cand_covered[ci][i][j] && !combined_without[i][j] {
-                                new_cells += 1;
-                            }
-                        }
-                    }
-                    if new_cells < 3 {
-                        continue;
-                    }
-
-                    let mut merged = combined_without.clone();
+        // Helper: compute cost from a selection of candidates
+        let compute_cost =
+            |sel: &[usize], automata: &[&[(u8, usize, u8, usize)]]| -> (Vec<Vec<bool>>, i64) {
+                let mut comb = vec![vec![false; n]; n];
+                let mut states: i64 = 0;
+                for &ci in sel {
+                    states += automata[cand_auto[ci]].len() as i64;
                     for i in 0..n {
                         for j in 0..n {
                             if cand_covered[ci][i][j] {
-                                merged[i][j] = true;
+                                comb[i][j] = true;
                             }
                         }
-                    }
-                    let (_, vc_remain) = self.vertex_cover_for_uncovered(&merged);
-                    let total = states_without + auto_states as i64 + vc_remain;
-                    if total < best_cost {
-                        best_cost = total;
-                        best_replacement = Some(ci);
                     }
                 }
+                let (_, vc_cost) = self.vertex_cover_for_uncovered(&comb);
+                (comb, states + vc_cost)
+            };
 
-                if let Some(repl) = best_replacement {
-                    if repl == usize::MAX {
-                        // Just remove
-                        selected.remove(si);
-                    } else {
-                        selected[si] = repl;
+        // === Simulated Annealing ===
+        let sa_start = Instant::now();
+        let mut rng = SmallRng::seed_from_u64(42);
+        let mut best_selected = selected.clone();
+        let mut best_cost = current_cost;
+        let max_selected = 20usize; // cap on number of snakes
+
+        let t_start: f64 = 5.0;
+        let t_end: f64 = 0.1;
+        let mut iter_count = 0u64;
+
+        loop {
+            let elapsed = sa_start.elapsed().as_millis();
+            if elapsed >= SA_TIME_LIMIT_MS {
+                break;
+            }
+            let progress = elapsed as f64 / SA_TIME_LIMIT_MS as f64;
+            let temperature = t_start * (t_end / t_start).powf(progress);
+
+            // Choose a neighbor operation
+            let op = if selected.is_empty() {
+                0 // must add
+            } else {
+                rng.gen_range(0..3)
+            };
+
+            let mut new_selected = selected.clone();
+            match op {
+                0 => {
+                    // Add a random candidate
+                    if new_selected.len() >= max_selected {
+                        iter_count += 1;
+                        continue;
                     }
-                    // Recompute combined and snake_states
-                    combined = vec![vec![false; n]; n];
-                    snake_states = 0;
-                    for &cj in &selected {
-                        snake_states += automata[cand_auto[cj]].len() as i64;
-                        for i in 0..n {
-                            for j in 0..n {
-                                if cand_covered[cj][i][j] {
-                                    combined[i][j] = true;
-                                }
-                            }
-                        }
+                    let ci = rng.gen_range(0, num_candidates);
+                    new_selected.push(ci);
+                }
+                1 => {
+                    // Remove a random snake
+                    let idx = rng.gen_range(0..new_selected.len());
+                    new_selected.remove(idx);
+                }
+                2 => {
+                    // Replace a random snake with a random candidate
+                    let idx = rng.gen_range(0..new_selected.len());
+                    let ci = rng.gen_range(0..num_candidates);
+                    new_selected[idx] = ci;
+                }
+                _ => unreachable!(),
+            }
+
+            let (new_combined, new_cost) = compute_cost(&new_selected, &automata);
+
+            let delta = new_cost - current_cost;
+            let accept = if delta <= 0 {
+                true
+            } else {
+                let prob = (-delta as f64 / temperature).exp();
+                rng.r#gen::<f64>() < prob
+            };
+
+            if accept {
+                selected = new_selected;
+                combined = new_combined;
+                current_cost = new_cost;
+
+                if current_cost < best_cost {
+                    best_cost = current_cost;
+                    best_selected = selected.clone();
+                }
+            }
+
+            iter_count += 1;
+        }
+
+        // Use the best found solution
+        selected = best_selected;
+        current_cost = best_cost;
+
+        // Recompute combined for output
+        combined = vec![vec![false; n]; n];
+        for &ci in &selected {
+            for i in 0..n {
+                for j in 0..n {
+                    if cand_covered[ci][i][j] {
+                        combined[i][j] = true;
                     }
-                    current_cost = best_cost;
-                    improved = true;
-                    break; // restart the swap loop
                 }
             }
         }
+
+        eprintln!("SA iterations: {}, best cost: {}", iter_count, best_cost);
 
         // Compare pure VC vs greedy snake+VC and output the better one
         if current_cost < vc_cost_pure {
