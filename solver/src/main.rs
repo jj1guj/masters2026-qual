@@ -56,7 +56,13 @@ impl Solver {
             .iter()
             .map(|s| s.bytes().map(|b| b - b'0').collect())
             .collect();
-        Solver { _a_k: a_k, _a_m: a_m, _a_w: a_w, wall_v, wall_h }
+        Solver {
+            _a_k: a_k,
+            _a_m: a_m,
+            _a_w: a_w,
+            wall_v,
+            wall_h,
+        }
     }
 
     fn can_move(&self, i: usize, j: usize, d: usize) -> bool {
@@ -70,7 +76,15 @@ impl Solver {
     }
 
     fn direction_between(i1: usize, j1: usize, i2: usize, j2: usize) -> usize {
-        if i2 < i1 { 0 } else if j2 > j1 { 1 } else if i2 > i1 { 2 } else { 3 }
+        if i2 < i1 {
+            0
+        } else if j2 > j1 {
+            1
+        } else if i2 > i1 {
+            2
+        } else {
+            3
+        }
     }
 
     fn turns_needed(from: usize, to: usize) -> Vec<char> {
@@ -84,17 +98,31 @@ impl Solver {
     }
 
     fn apply_turn(dir: usize, turn: char) -> usize {
-        match turn { 'R' => (dir + 1) % 4, 'L' => (dir + 3) % 4, _ => dir }
+        match turn {
+            'R' => (dir + 1) % 4,
+            'L' => (dir + 3) % 4,
+            _ => dir,
+        }
     }
 
     fn dir_char(d: usize) -> char {
-        match d { 0 => 'U', 1 => 'R', 2 => 'D', 3 => 'L', _ => unreachable!() }
+        match d {
+            0 => 'U',
+            1 => 'R',
+            2 => 'D',
+            3 => 'L',
+            _ => unreachable!(),
+        }
     }
 
     // ---- DFS Euler Tour ----
 
     fn dfs_euler_tour_from(
-        &self, si: usize, sj: usize, rng: &mut SmallRng, randomize: bool,
+        &self,
+        si: usize,
+        sj: usize,
+        rng: &mut SmallRng,
+        randomize: bool,
     ) -> Vec<(usize, usize)> {
         let mut visited = vec![vec![false; N]; N];
         let mut tour = Vec::with_capacity(800);
@@ -103,9 +131,13 @@ impl Solver {
     }
 
     fn dfs_impl(
-        &self, i: usize, j: usize,
-        visited: &mut Vec<Vec<bool>>, tour: &mut Vec<(usize, usize)>,
-        rng: &mut SmallRng, randomize: bool,
+        &self,
+        i: usize,
+        j: usize,
+        visited: &mut Vec<Vec<bool>>,
+        tour: &mut Vec<(usize, usize)>,
+        rng: &mut SmallRng,
+        randomize: bool,
     ) {
         visited[i][j] = true;
         tour.push((i, j));
@@ -119,7 +151,9 @@ impl Solver {
             [3, 2, 0, 1]
         };
         for &d in &dirs {
-            if !self.can_move(i, j, d) { continue; }
+            if !self.can_move(i, j, d) {
+                continue;
+            }
             let ni = ((i as i32) + DI[d]) as usize;
             let nj = ((j as i32) + DJ[d]) as usize;
             if !visited[ni][nj] {
@@ -166,7 +200,9 @@ impl Solver {
         while i < m {
             if actions[i].0 == 'F' {
                 let f_start = i;
-                while i < m && actions[i].0 == 'F' { i += 1; }
+                while i < m && actions[i].0 == 'F' {
+                    i += 1;
+                }
                 if i < m && actions[i].0 != 'F' && actions[i].1 {
                     seg_act0.push('F');
                     seg_act1.push(actions[i].0);
@@ -194,13 +230,17 @@ impl Solver {
             let next = (idx + 1) % sm;
             if seg_self_loop[idx] {
                 states.push(AutoState {
-                    act0: 'F', next0: idx,
-                    act1: seg_act1[idx], next1: next,
+                    act0: 'F',
+                    next0: idx,
+                    act1: seg_act1[idx],
+                    next1: next,
                 });
             } else {
                 states.push(AutoState {
-                    act0: seg_act0[idx], next0: next,
-                    act1: seg_act1[idx], next1: next,
+                    act0: seg_act0[idx],
+                    next0: next,
+                    act1: seg_act1[idx],
+                    next1: next,
                 });
             }
         }
@@ -211,7 +251,9 @@ impl Solver {
 
     fn minimize(states: &[AutoState], initial: usize) -> (Vec<AutoState>, usize) {
         let m = states.len();
-        if m <= 1 { return (states.to_vec(), 0); }
+        if m <= 1 {
+            return (states.to_vec(), 0);
+        }
 
         // Reachability
         let mut reachable = vec![false; m];
@@ -229,12 +271,19 @@ impl Solver {
         let ids: Vec<usize> = (0..m).filter(|&i| reachable[i]).collect();
         let rm = ids.len();
         let mut old2new = vec![0usize; m];
-        for (ni, &oi) in ids.iter().enumerate() { old2new[oi] = ni; }
+        for (ni, &oi) in ids.iter().enumerate() {
+            old2new[oi] = ni;
+        }
 
-        let cstates: Vec<AutoState> = ids.iter().map(|&oi| AutoState {
-            act0: states[oi].act0, next0: old2new[states[oi].next0],
-            act1: states[oi].act1, next1: old2new[states[oi].next1],
-        }).collect();
+        let cstates: Vec<AutoState> = ids
+            .iter()
+            .map(|&oi| AutoState {
+                act0: states[oi].act0,
+                next0: old2new[states[oi].next0],
+                act1: states[oi].act1,
+                next1: old2new[states[oi].next1],
+            })
+            .collect();
         let cinit = old2new[initial];
 
         // Partition refinement
@@ -243,7 +292,11 @@ impl Solver {
         let mut ng = 0usize;
         for i in 0..rm {
             let sig = (cstates[i].act0, cstates[i].act1);
-            let g = *sig_map.entry(sig).or_insert_with(|| { let v = ng; ng += 1; v });
+            let g = *sig_map.entry(sig).or_insert_with(|| {
+                let v = ng;
+                ng += 1;
+                v
+            });
             group[i] = g;
         }
 
@@ -253,10 +306,16 @@ impl Solver {
             let mut new_ng = 0usize;
             for i in 0..rm {
                 let sig = (group[i], group[cstates[i].next0], group[cstates[i].next1]);
-                let g = *new_map.entry(sig).or_insert_with(|| { let v = new_ng; new_ng += 1; v });
+                let g = *new_map.entry(sig).or_insert_with(|| {
+                    let v = new_ng;
+                    new_ng += 1;
+                    v
+                });
                 new_group[i] = g;
             }
-            if new_ng == ng { break; }
+            if new_ng == ng {
+                break;
+            }
             group = new_group;
             ng = new_ng;
         }
@@ -264,22 +323,30 @@ impl Solver {
         // Build minimized automaton
         let mut rep = vec![None; ng];
         for i in 0..rm {
-            if rep[group[i]].is_none() { rep[group[i]] = Some(i); }
-        }
-        let min_states: Vec<AutoState> = (0..ng).map(|g| {
-            let r = rep[g].unwrap();
-            AutoState {
-                act0: cstates[r].act0, next0: group[cstates[r].next0],
-                act1: cstates[r].act1, next1: group[cstates[r].next1],
+            if rep[group[i]].is_none() {
+                rep[group[i]] = Some(i);
             }
-        }).collect();
+        }
+        let min_states: Vec<AutoState> = (0..ng)
+            .map(|g| {
+                let r = rep[g].unwrap();
+                AutoState {
+                    act0: cstates[r].act0,
+                    next0: group[cstates[r].next0],
+                    act1: cstates[r].act1,
+                    next1: group[cstates[r].next1],
+                }
+            })
+            .collect();
 
         (min_states, group[cinit])
     }
 
     /// Remap so initial state becomes state 0
     fn remap_to_zero(states: &[AutoState], initial: usize) -> Vec<AutoState> {
-        if initial == 0 { return states.to_vec(); }
+        if initial == 0 {
+            return states.to_vec();
+        }
         let m = states.len();
         let mut old2new = vec![0usize; m];
         let mut visited = vec![false; m];
@@ -296,13 +363,29 @@ impl Solver {
                 }
             }
         }
-        for i in 0..m { if !visited[i] { order.push(i); } }
-        for (ni, &oi) in order.iter().enumerate() { old2new[oi] = ni; }
-        let mut result = vec![AutoState { act0: 'R', next0: 0, act1: 'R', next1: 0 }; m];
+        for i in 0..m {
+            if !visited[i] {
+                order.push(i);
+            }
+        }
+        for (ni, &oi) in order.iter().enumerate() {
+            old2new[oi] = ni;
+        }
+        let mut result = vec![
+            AutoState {
+                act0: 'R',
+                next0: 0,
+                act1: 'R',
+                next1: 0
+            };
+            m
+        ];
         for (oi, st) in states.iter().enumerate() {
             result[old2new[oi]] = AutoState {
-                act0: st.act0, next0: old2new[st.next0],
-                act1: st.act1, next1: old2new[st.next1],
+                act0: st.act0,
+                next0: old2new[st.next0],
+                act1: st.act1,
+                next1: old2new[st.next1],
             };
         }
         result
@@ -314,7 +397,9 @@ impl Solver {
         let actions = self.tour_to_actions(tour, init_dir);
         let automaton = Self::build_automaton(&actions);
         let (min_auto, min_init) = Self::minimize(&automaton, 0);
-        if min_auto.len() > MAX_STATES { return None; }
+        if min_auto.len() > MAX_STATES {
+            return None;
+        }
         let remapped = Self::remap_to_zero(&min_auto, min_init);
         Some(Solution {
             states: remapped,
@@ -346,10 +431,12 @@ impl Solver {
 
         // Randomized search
         while t0.elapsed().as_millis() < TIME_LIMIT_MS {
-            let si = rng.gen_range(0, N);
-            let sj = rng.gen_range(0, N);
+            let si = rng.random_range(0..N);
+            let sj = rng.random_range(0..N);
             let tour = self.dfs_euler_tour_from(si, sj, &mut rng, true);
-            if tour.len() < 2 { continue; }
+            if tour.len() < 2 {
+                continue;
+            }
 
             for init_dir in 0..4 {
                 if let Some(sol) = self.build_solution(&tour, init_dir) {
@@ -373,22 +460,38 @@ impl Solver {
     fn output(&self, sol: &Solution) {
         let m = sol.states.len();
         println!("1");
-        println!("{} {} {} {}", m, sol.start_i, sol.start_j, Self::dir_char(sol.start_dir));
+        println!(
+            "{} {} {} {}",
+            m,
+            sol.start_i,
+            sol.start_j,
+            Self::dir_char(sol.start_dir)
+        );
         for st in &sol.states {
             println!("{} {} {} {}", st.act0, st.next0, st.act1, st.next1);
         }
-        for _ in 0..N { println!("{}", "0".repeat(N - 1)); }
-        for _ in 0..N - 1 { println!("{}", "0".repeat(N)); }
+        for _ in 0..N {
+            println!("{}", "0".repeat(N - 1));
+        }
+        for _ in 0..N - 1 {
+            println!("{}", "0".repeat(N));
+        }
     }
 
     fn naive(&self) {
         println!("{}", N * N);
-        for i in 0..N { for j in 0..N {
-            println!("1 {} {} U", i, j);
-            println!("R 0 R 0");
-        }}
-        for _ in 0..N { println!("{}", "0".repeat(N - 1)); }
-        for _ in 0..N - 1 { println!("{}", "0".repeat(N)); }
+        for i in 0..N {
+            for j in 0..N {
+                println!("1 {} {} U", i, j);
+                println!("R 0 R 0");
+            }
+        }
+        for _ in 0..N {
+            println!("{}", "0".repeat(N - 1));
+        }
+        for _ in 0..N - 1 {
+            println!("{}", "0".repeat(N));
+        }
     }
 }
 
