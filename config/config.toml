@@ -1,5 +1,5 @@
 # Tools artifact URL (download from contest page and set here)
-tools_zip_url = "https://example.com/tools.zip"
+tools_zip_url = "https://img.atcoder.jp/masters2026-qual/Cy1HtjaW.zip"
 
 # Directory configuration
 [paths]
