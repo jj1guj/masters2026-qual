@@ -453,6 +453,191 @@ impl Solver {
         }
     }
 
+    fn has_wall_ahead_dir_on(
+        row: usize,
+        col: usize,
+        dir: usize,
+        v: &[[bool; MAX_N - 1]; MAX_N],
+        h: &[[bool; MAX_N]; MAX_N - 1],
+    ) -> bool {
+        match dir {
+            0 => row == 0 || h[row - 1][col],
+            1 => col == MAX_N - 1 || v[row][col],
+            2 => row == MAX_N - 1 || h[row][col],
+            3 => col == 0 || v[row][col - 1],
+            _ => unreachable!(),
+        }
+    }
+
+    fn simulate_reachable_with_board(
+        &self,
+        start: (usize, usize),
+        start_dir: usize,
+        auto_table: &[(u8, usize, u8, usize)],
+        v: &[[bool; MAX_N - 1]; MAX_N],
+        h: &[[bool; MAX_N]; MAX_N - 1],
+    ) -> [[bool; MAX_N]; MAX_N] {
+        let num_states = auto_table.len();
+        let mut visited = vec![vec![vec![vec![false; num_states]; 4]; MAX_N]; MAX_N];
+        let mut history: Vec<(usize, usize, usize, usize)> = Vec::new();
+
+        let (mut row, mut col) = start;
+        let mut dir = start_dir;
+        let mut auto_state = 0usize;
+
+        loop {
+            if visited[row][col][dir][auto_state] {
+                let target = (row, col, dir, auto_state);
+                let cycle_start = history.iter().position(|s| *s == target).unwrap();
+                let mut reachable = [[false; MAX_N]; MAX_N];
+                for i in cycle_start..history.len() {
+                    reachable[history[i].0][history[i].1] = true;
+                }
+                return reachable;
+            }
+
+            visited[row][col][dir][auto_state] = true;
+            history.push((row, col, dir, auto_state));
+
+            let wall = Self::has_wall_ahead_dir_on(row, col, dir, v, h);
+            let (action, next_state) = if wall {
+                (auto_table[auto_state].2, auto_table[auto_state].3)
+            } else {
+                (auto_table[auto_state].0, auto_table[auto_state].1)
+            };
+
+            match action {
+                0 => match dir {
+                    0 => row -= 1,
+                    1 => col += 1,
+                    2 => row += 1,
+                    3 => col -= 1,
+                    _ => unreachable!(),
+                },
+                1 => dir = (dir + 1) % 4,
+                2 => dir = (dir + 3) % 4,
+                _ => unreachable!(),
+            }
+            auto_state = next_state;
+        }
+    }
+
+    fn find_valid_dir_on_board(
+        &self,
+        start: (usize, usize),
+        auto_idx: usize,
+        v: &[[bool; MAX_N - 1]; MAX_N],
+        h: &[[bool; MAX_N]; MAX_N - 1],
+    ) -> Option<usize> {
+        for dir in 0..4 {
+            let reachable =
+                self.simulate_reachable_with_board(start, dir, AUTOMATA[auto_idx].table, v, h);
+            if reachable.iter().all(|row| row.iter().all(|&x| x)) {
+                return Some(dir);
+            }
+        }
+        None
+    }
+
+    fn optimize_single_robot_walls(
+        &self,
+        start: (usize, usize),
+        auto_idx: usize,
+        init_dir: usize,
+        v_out: &mut [[i32; MAX_N - 1]; MAX_N],
+        h_out: &mut [[i32; MAX_N]; MAX_N - 1],
+    ) -> usize {
+        let mut board_v = self.v;
+        let mut board_h = self.h;
+        for i in 0..MAX_N {
+            for j in 0..MAX_N - 1 {
+                if v_out[i][j] == 1 {
+                    board_v[i][j] = true;
+                }
+            }
+        }
+        for i in 0..MAX_N - 1 {
+            for j in 0..MAX_N {
+                if h_out[i][j] == 1 {
+                    board_h[i][j] = true;
+                }
+            }
+        }
+
+        let mut candidates: Vec<(bool, usize, usize)> = Vec::new();
+        for i in 0..MAX_N {
+            for j in 0..MAX_N - 1 {
+                if v_out[i][j] == 1 {
+                    candidates.push((true, i, j));
+                }
+            }
+        }
+        for i in 0..MAX_N - 1 {
+            for j in 0..MAX_N {
+                if h_out[i][j] == 1 {
+                    candidates.push((false, i, j));
+                }
+            }
+        }
+
+        let mut seed = 0xA24BAED4963EE407u64
+            ^ ((start.0 as u64) << 24)
+            ^ ((start.1 as u64) << 16)
+            ^ (self.a_w as u64)
+            ^ ((candidates.len() as u64) << 32);
+        let begin = std::time::Instant::now();
+        let time_limit = std::time::Duration::from_millis(120);
+        let mut best_dir = init_dir;
+
+        for _ in 0..2 {
+            if begin.elapsed() > time_limit {
+                break;
+            }
+
+            let mut improved = false;
+            let mut order: Vec<usize> = (0..candidates.len()).collect();
+            Self::shuffle_vec(&mut order, &mut seed);
+
+            for idx in order {
+                if begin.elapsed() > time_limit {
+                    break;
+                }
+                let (is_v, i, j) = candidates[idx];
+                if is_v {
+                    if v_out[i][j] == 0 {
+                        continue;
+                    }
+                    v_out[i][j] = 0;
+                    board_v[i][j] = false;
+                } else {
+                    if h_out[i][j] == 0 {
+                        continue;
+                    }
+                    h_out[i][j] = 0;
+                    board_h[i][j] = false;
+                }
+
+                if let Some(new_dir) = self.find_valid_dir_on_board(start, auto_idx, &board_v, &board_h)
+                {
+                    best_dir = new_dir;
+                    improved = true;
+                } else if is_v {
+                    v_out[i][j] = 1;
+                    board_v[i][j] = true;
+                } else {
+                    h_out[i][j] = 1;
+                    board_h[i][j] = true;
+                }
+            }
+
+            if !improved {
+                break;
+            }
+        }
+
+        best_dir
+    }
+
     fn cell_idx(row: usize, col: usize) -> usize {
         row * MAX_N + col
     }
@@ -624,45 +809,121 @@ impl Solver {
         false
     }
 
+    fn greedy_hamilton(
+        &self,
+        adj: &Vec<Vec<usize>>,
+        start: usize,
+        seed: &mut u64,
+    ) -> Option<Vec<usize>> {
+        let mut visited = [false; MAX_N * MAX_N];
+        let mut path = Vec::with_capacity(MAX_N * MAX_N);
+        let mut current = start;
+        visited[current] = true;
+        path.push(current);
+
+        for _ in 1..(MAX_N * MAX_N) {
+            let mut candidates: Vec<usize> = adj[current]
+                .iter()
+                .copied()
+                .filter(|&to| !visited[to])
+                .collect();
+            if candidates.is_empty() {
+                return None;
+            }
+
+            Self::shuffle_vec(&mut candidates, seed);
+            candidates.sort_by_key(|&to| {
+                let onward = adj[to].iter().filter(|&&n2| !visited[n2] && n2 != current).count();
+                let second = adj[to]
+                    .iter()
+                    .filter(|&&n2| !visited[n2] && n2 != current)
+                    .map(|&n2| adj[n2].iter().filter(|&&n3| !visited[n3] && n3 != to).count())
+                    .min()
+                    .unwrap_or(usize::MAX);
+                (onward, second)
+            });
+
+            let nxt = candidates[0];
+            visited[nxt] = true;
+            path.push(nxt);
+            current = nxt;
+        }
+
+        Some(path)
+    }
+
     fn find_hamilton_path(&self) -> Option<Vec<(usize, usize)>> {
         let adj = self.build_open_graph();
-        let mut starts: Vec<usize> = (0..MAX_N * MAX_N).collect();
+        let mut starts: Vec<usize> = (0..MAX_N * MAX_N)
+            .filter(|&u| !adj[u].is_empty())
+            .collect();
+        if starts.is_empty() {
+            return None;
+        }
         starts.sort_by_key(|&u| adj[u].len());
 
         let start_time = std::time::Instant::now();
-        let total_limit = std::time::Duration::from_millis(350);
+        let total_limit = if self.a_k >= 500 {
+            std::time::Duration::from_millis(900)
+        } else {
+            std::time::Duration::from_millis(450)
+        };
 
-        for (rank, &s) in starts.iter().enumerate() {
-            if adj[s].is_empty() {
-                continue;
-            }
+        let seed_base = 0x9E3779B97F4A7C15u64
+            ^ (self.a_k as u64)
+            ^ ((self.a_m as u64) << 16)
+            ^ ((self.a_w as u64) << 40);
+
+        'outer: for (rank, &s) in starts.iter().enumerate() {
             if start_time.elapsed() > total_limit {
                 break;
             }
 
-            let mut seed = 0x9E3779B97F4A7C15u64
-                ^ ((s as u64) << 32)
-                ^ (rank as u64)
-                ^ (self.a_k as u64)
-                ^ ((self.a_m as u64) << 16)
-                ^ ((self.a_w as u64) << 40);
+            // まず高速な greedy 構築を複数回試す
+            let greedy_trials = if self.a_k >= 500 { 20usize } else { 8usize };
+            for g in 0..greedy_trials {
+                if start_time.elapsed() > total_limit {
+                    break 'outer;
+                }
+                let mut seed = seed_base
+                    ^ ((s as u64) << 32)
+                    ^ ((rank as u64) << 8)
+                    ^ ((g as u64) << 48)
+                    ^ 0xC6A4A7935BD1E995u64;
+                if let Some(path) = self.greedy_hamilton(&adj, s, &mut seed) {
+                    let route = path.into_iter().map(Self::idx_cell).collect::<Vec<_>>();
+                    return Some(route);
+                }
+            }
 
-            let mut visited = [false; MAX_N * MAX_N];
-            visited[s] = true;
-            let mut path = vec![s];
+            let retries = if adj[s].len() <= 2 { 7usize } else { 4usize };
+            for attempt in 0..retries {
+                if start_time.elapsed() > total_limit {
+                    break 'outer;
+                }
 
-            if self.dfs_hamilton(
-                &adj,
-                s,
-                &mut visited,
-                &mut path,
-                1,
-                &mut seed,
-                start_time,
-                total_limit,
-            ) {
-                let route = path.into_iter().map(Self::idx_cell).collect::<Vec<_>>();
-                return Some(route);
+                let mut seed = seed_base
+                    ^ ((s as u64) << 32)
+                    ^ ((rank as u64) << 8)
+                    ^ (attempt as u64);
+
+                let mut visited = [false; MAX_N * MAX_N];
+                visited[s] = true;
+                let mut path = vec![s];
+
+                if self.dfs_hamilton(
+                    &adj,
+                    s,
+                    &mut visited,
+                    &mut path,
+                    1,
+                    &mut seed,
+                    start_time,
+                    total_limit,
+                ) {
+                    let route = path.into_iter().map(Self::idx_cell).collect::<Vec<_>>();
+                    return Some(route);
+                }
             }
         }
 
@@ -737,36 +998,29 @@ impl Solver {
         let (v_out, h_out) = self.build_walls_for_route(&route);
 
         let start = route[0];
-        let dir = Self::route_initial_dir(&route);
         let corridor_idx = AUTOMATA.len() - 1;
 
-        let mut test_solver = Solver {
-            n: self.n,
-            a_k: self.a_k,
-            a_m: self.a_m,
-            a_w: self.a_w,
-            v: self.v,
-            h: self.h,
-        };
+        let mut board_v = self.v;
+        let mut board_h = self.h;
         for i in 0..MAX_N {
             for j in 0..MAX_N - 1 {
                 if v_out[i][j] == 1 {
-                    test_solver.v[i][j] = true;
+                    board_v[i][j] = true;
                 }
             }
         }
         for i in 0..MAX_N - 1 {
             for j in 0..MAX_N {
                 if h_out[i][j] == 1 {
-                    test_solver.h[i][j] = true;
+                    board_h[i][j] = true;
                 }
             }
         }
 
-        let reachable = test_solver.simulate_reachable_with(start, dir, AUTOMATA[corridor_idx].table);
-        if !reachable.iter().all(|row| row.iter().all(|&x| x)) {
-            return None;
-        }
+        let init_dir = Self::route_initial_dir(&route);
+        let dir = self
+            .find_valid_dir_on_board(start, corridor_idx, &board_v, &board_h)
+            .or(Some(init_dir))?;
 
         let configs = vec![(start, dir, corridor_idx)];
         Some((configs, v_out, h_out))
@@ -1208,8 +1462,16 @@ impl Solver {
     }
 
     fn solve(&mut self) {
-        let single = self.try_single_robot_route();
+        let mut single = self.try_single_robot_route();
         let multi = self.solve_multi_robot();
+
+        if let Some((ref mut s_cfg, ref mut s_v, ref mut s_h)) = single {
+            if s_cfg.len() == 1 {
+                let (start, dir, auto_idx) = s_cfg[0];
+                let new_dir = self.optimize_single_robot_walls(start, auto_idx, dir, s_v, s_h);
+                s_cfg[0].1 = new_dir;
+            }
+        }
 
         if let Some((s_cfg, s_v, s_h)) = single {
             let single_cost = self.solution_cost(&s_cfg, &s_v, &s_h);
