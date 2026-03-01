@@ -1116,7 +1116,10 @@
             draw();
         }
         window.addEventListener('resize', resizeCanvas);
-        window.addEventListener('load', resizeCanvas);
+        window.addEventListener('load', () => {
+            resizeCanvas();
+            generateInput();
+        });
     </script>
 </body>
 
