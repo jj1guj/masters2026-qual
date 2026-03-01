@@ -383,6 +383,30 @@
                 </div>
 
                 <div class="panel-section">
+                    <h3>アニメーション</h3>
+                    <div style="display:flex;gap:4px;align-items:center;margin-bottom:6px;">
+                        <button class="btn btn-secondary" id="anim-reset"
+                            style="padding:3px 8px;font-size:0.8rem;">⏹</button>
+                        <button class="btn btn-secondary" id="anim-step-back"
+                            style="padding:3px 8px;font-size:0.8rem;">◀|</button>
+                        <button class="btn btn-primary" id="anim-play"
+                            style="padding:3px 10px;font-size:0.8rem;">▶</button>
+                        <button class="btn btn-secondary" id="anim-step-fwd"
+                            style="padding:3px 8px;font-size:0.8rem;">|▶</button>
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px;">
+                        <label style="font-size:0.8rem;color:#ccc;min-width:30px;">速度:</label>
+                        <input type="range" id="anim-speed" min="1" max="60" value="10" style="flex:1;">
+                        <span id="anim-speed-label" style="font-size:0.75rem;color:#aaa;min-width:35px;">10/s</span>
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                        <label style="font-size:0.8rem;color:#ccc;min-width:30px;">T:</label>
+                        <input type="range" id="anim-slider" min="0" max="0" value="0" style="flex:1;">
+                        <span id="anim-step-label" style="font-size:0.75rem;color:#aaa;min-width:55px;">0 / 0</span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
                     <div id="status-message"></div>
                 </div>
             </div>
@@ -441,6 +465,12 @@
         let currentScoreData = null;   // full score response for canvas
         let debounceTimer = null;
 
+        // Animation state
+        let animStep = 0;
+        let animPlaying = false;
+        let animSpeed = 10;
+        let animIntervalId = null;
+
         // ============================================================
         // File loading
         // ============================================================
@@ -479,7 +509,7 @@
         document.getElementById('show-robots').addEventListener('change', draw);
         document.getElementById('show-routes').addEventListener('change', draw);
         document.getElementById('show-head-only').addEventListener('change', draw);
-        document.getElementById('robot-select').addEventListener('change', draw);
+        document.getElementById('robot-select').addEventListener('change', () => { updateAnimUI(); draw(); });
 
         // Auto-generate input when seed or problem type changes
         let generateTimer = null;
@@ -540,6 +570,7 @@
                 currentScoreData = data;
                 updateInfoBar(data);
                 updateRobotSelect(data);
+                animReset();
                 if (data.success) {
                     setStatus('success', `Score = ${data.score}`);
                 } else {
@@ -688,6 +719,31 @@
             const showHeadOnly = document.getElementById('show-head-only').checked;
             const selectedRobot = parseInt(document.getElementById('robot-select').value);
 
+            // Animation mode detection
+            const isAnimMode = (animStep > 0 || animPlaying) && currentScoreData && currentScoreData.routes;
+            let animVisited = null;
+            if (isAnimMode) {
+                const routes = currentScoreData.routes;
+                animVisited = Array.from({ length: n }, () => Array(n).fill(false));
+                for (let k = 0; k < routes.length; k++) {
+                    if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                    const head = routes[k].head;
+                    const tail = routes[k].tail;
+                    const period = Math.max(tail.length - 1, 1);
+                    const totalUnique = head.length + period - 1;
+                    const maxT = Math.min(animStep, totalUnique);
+                    for (let t = 0; t < head.length && t <= maxT; t++) {
+                        animVisited[head[t][0]][head[t][1]] = true;
+                    }
+                    if (maxT >= head.length && tail.length > 1) {
+                        const tailSteps = maxT - head.length + 1;
+                        for (let t = 1; t <= tailSteps; t++) {
+                            animVisited[tail[t][0]][tail[t][1]] = true;
+                        }
+                    }
+                }
+            }
+
             // Background cells
             for (let i = 0; i < n; i++) {
                 for (let j = 0; j < n; j++) {
@@ -695,7 +751,11 @@
                     const y = offsetY + i * cellSize;
 
                     let color = '#2a2a4a'; // default: not patrolled
-                    if (currentScoreData && currentScoreData.checked) {
+                    if (isAnimMode) {
+                        if (animVisited[i][j]) {
+                            color = 'rgba(46, 213, 115, 0.25)';
+                        }
+                    } else if (currentScoreData && currentScoreData.checked) {
                         if (currentScoreData.checked[i] && currentScoreData.checked[i][j]) {
                             color = 'rgba(46, 213, 115, 0.25)';
                         }
@@ -737,24 +797,48 @@
             // Draw route paths
             if (currentScoreData && currentScoreData.routes && showRoutes) {
                 const routes = currentScoreData.routes;
-                for (let k = 0; k < routes.length; k++) {
-                    if (selectedRobot >= 0 && k !== selectedRobot) continue;
-                    const color = COLORS[k % COLORS.length];
-                    const tail = routes[k].tail;
-                    if (tail.length > 1) {
+                if (isAnimMode) {
+                    // Animation trail (last 40 steps)
+                    const trailLen = 40;
+                    for (let k = 0; k < routes.length; k++) {
+                        if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                        const color = COLORS[k % COLORS.length];
+                        const start = Math.max(0, animStep - trailLen);
                         ctx.strokeStyle = color;
-                        ctx.lineWidth = 1.5;
+                        ctx.lineWidth = 2;
                         ctx.globalAlpha = 0.5;
                         ctx.beginPath();
-                        for (let t = 0; t < tail.length; t++) {
-                            const [ci, cj] = tail[t];
-                            const cx = offsetX + cj * cellSize + cellSize / 2;
-                            const cy = offsetY + ci * cellSize + cellSize / 2;
-                            if (t === 0) ctx.moveTo(cx, cy);
+                        let first = true;
+                        for (let t = start; t <= animStep; t++) {
+                            const pos = getRobotPosAtStep(routes[k], t);
+                            const cx = offsetX + pos[1] * cellSize + cellSize / 2;
+                            const cy = offsetY + pos[0] * cellSize + cellSize / 2;
+                            if (first) { ctx.moveTo(cx, cy); first = false; }
                             else ctx.lineTo(cx, cy);
                         }
                         ctx.stroke();
                         ctx.globalAlpha = 1.0;
+                    }
+                } else {
+                    for (let k = 0; k < routes.length; k++) {
+                        if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                        const color = COLORS[k % COLORS.length];
+                        const tail = routes[k].tail;
+                        if (tail.length > 1) {
+                            ctx.strokeStyle = color;
+                            ctx.lineWidth = 1.5;
+                            ctx.globalAlpha = 0.5;
+                            ctx.beginPath();
+                            for (let t = 0; t < tail.length; t++) {
+                                const [ci, cj] = tail[t];
+                                const cx = offsetX + cj * cellSize + cellSize / 2;
+                                const cy = offsetY + ci * cellSize + cellSize / 2;
+                                if (t === 0) ctx.moveTo(cx, cy);
+                                else ctx.lineTo(cx, cy);
+                            }
+                            ctx.stroke();
+                            ctx.globalAlpha = 1.0;
+                        }
                     }
                 }
             }
@@ -809,8 +893,32 @@
             ctx.lineWidth = 4;
             ctx.strokeRect(offsetX, offsetY, n * cellSize, n * cellSize);
 
-            // Draw robots initial positions
-            if (currentScoreData && currentScoreData.robots && showRobots) {
+            // Draw robots
+            if (isAnimMode && currentScoreData && currentScoreData.routes) {
+                // Animation mode: show robots at current step
+                const routes = currentScoreData.routes;
+                for (let k = 0; k < routes.length; k++) {
+                    if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                    const pos = getRobotPosAtStep(routes[k], animStep);
+                    const cx = offsetX + pos[1] * cellSize + cellSize / 2;
+                    const cy = offsetY + pos[0] * cellSize + cellSize / 2;
+                    const color = COLORS[k % COLORS.length];
+
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.9;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, cellSize * 0.35, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `${Math.floor(cellSize * 0.3)}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(k.toString(), cx, cy);
+                }
+            } else if (currentScoreData && currentScoreData.robots && showRobots) {
+                // Static mode: show robots at initial positions
                 const dirArrows = ['↑', '→', '↓', '←'];
                 const robots = currentScoreData.robots;
                 for (let k = 0; k < robots.length; k++) {
@@ -820,7 +928,6 @@
                     const cy = offsetY + r.i * cellSize + cellSize / 2;
                     const color = COLORS[k % COLORS.length];
 
-                    // Robot circle
                     ctx.fillStyle = color;
                     ctx.globalAlpha = 0.8;
                     ctx.beginPath();
@@ -828,7 +935,6 @@
                     ctx.fill();
                     ctx.globalAlpha = 1.0;
 
-                    // Direction arrow
                     ctx.fillStyle = '#fff';
                     ctx.font = `${Math.floor(cellSize * 0.45)}px sans-serif`;
                     ctx.textAlign = 'center';
@@ -904,6 +1010,99 @@
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // ============================================================
+        // Animation
+        // ============================================================
+        function getAnimMaxStep() {
+            if (!currentScoreData || !currentScoreData.routes) return 0;
+            const routes = currentScoreData.routes;
+            const selectedRobot = parseInt(document.getElementById('robot-select').value);
+            let maxStep = 0;
+            for (let k = 0; k < routes.length; k++) {
+                if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                const total = routes[k].head.length + routes[k].tail.length - 2;
+                maxStep = Math.max(maxStep, total);
+            }
+            return maxStep;
+        }
+
+        function getRobotPosAtStep(route, step) {
+            const headLen = route.head.length;
+            if (step < headLen) return route.head[step];
+            const period = route.tail.length - 1;
+            if (period <= 0) return route.tail[0];
+            return route.tail[(step - headLen + 1) % period];
+        }
+
+        function updateAnimUI() {
+            const max = getAnimMaxStep();
+            const slider = document.getElementById('anim-slider');
+            slider.max = max;
+            if (animStep > max) animStep = max;
+            slider.value = animStep;
+            document.getElementById('anim-step-label').textContent = `${animStep} / ${max}`;
+        }
+
+        function animTogglePlay() {
+            if (animPlaying) { animPause(); } else { animPlayStart(); }
+        }
+
+        function animPlayStart() {
+            if (!currentScoreData || !currentScoreData.routes) return;
+            animPlaying = true;
+            document.getElementById('anim-play').textContent = '⏸';
+            if (animIntervalId) clearInterval(animIntervalId);
+            animIntervalId = setInterval(() => {
+                const max = getAnimMaxStep();
+                if (animStep >= max) { animStep = 0; } else { animStep++; }
+                updateAnimUI();
+                draw();
+            }, 1000 / animSpeed);
+        }
+
+        function animPause() {
+            animPlaying = false;
+            document.getElementById('anim-play').textContent = '▶';
+            if (animIntervalId) { clearInterval(animIntervalId); animIntervalId = null; }
+        }
+
+        function animReset() {
+            animPause();
+            animStep = 0;
+            updateAnimUI();
+        }
+
+        function animStepForward() {
+            animPause();
+            const max = getAnimMaxStep();
+            if (animStep < max) animStep++;
+            updateAnimUI();
+            draw();
+        }
+
+        function animStepBackward() {
+            animPause();
+            if (animStep > 0) animStep--;
+            updateAnimUI();
+            draw();
+        }
+
+        document.getElementById('anim-play').addEventListener('click', animTogglePlay);
+        document.getElementById('anim-reset').addEventListener('click', () => { animReset(); draw(); });
+        document.getElementById('anim-step-fwd').addEventListener('click', animStepForward);
+        document.getElementById('anim-step-back').addEventListener('click', animStepBackward);
+        document.getElementById('anim-slider').addEventListener('input', (e) => {
+            animPause();
+            animStep = parseInt(e.target.value);
+            document.getElementById('anim-step-label').textContent = `${animStep} / ${e.target.max}`;
+            draw();
+        });
+        document.getElementById('anim-speed').addEventListener('input', (e) => {
+            animSpeed = parseInt(e.target.value);
+            document.getElementById('anim-speed-label').textContent = `${animSpeed}/s`;
+            if (animPlaying) { animPause(); animPlayStart(); }
+        });
 
         // ============================================================
         // Responsive canvas
