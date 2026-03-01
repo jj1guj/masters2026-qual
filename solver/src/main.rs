@@ -1,5 +1,8 @@
 use proconio::input;
 
+const MAX_N: usize = 20;
+const K: usize = MAX_N * MAX_N;
+
 struct Solver {
     n: usize,
     a_k: i64,
@@ -10,16 +13,14 @@ struct Solver {
 }
 
 impl Solver {
-    const MAX_N: usize = 20;
-    const K: usize = Self::MAX_N * Self::MAX_N;
     fn new() -> Self {
         input! {
             n: usize,
             a_k: i64,
             a_m: i64,
             a_w: i64,
-            wall_v: [String; Self::MAX_N],
-            wall_h: [String; Self::MAX_N -1],
+            wall_v: [String; MAX_N],
+            wall_h: [String; MAX_N -1],
         }
 
         Solver {
@@ -33,10 +34,10 @@ impl Solver {
     }
 
     fn solve(&mut self) {
-        println!("{}", Self::K);
+        println!("{}", K);
 
-        for i in 0..Self::MAX_N {
-            for j in 0..Self::MAX_N {
+        for i in 0..MAX_N {
+            for j in 0..MAX_N {
                 // 1 state, start at (i,j) facing Up, always turn right
                 println!("1 {} {} U", i, j);
                 println!("R 0 R 0");
@@ -44,11 +45,11 @@ impl Solver {
         }
 
         // No new walls
-        for _ in 0..Self::MAX_N {
-            println!("{}", "0".repeat(Self::MAX_N - 1));
+        for _ in 0..MAX_N {
+            println!("{}", "0".repeat(MAX_N - 1));
         }
-        for _ in 0..Self::MAX_N - 1 {
-            println!("{}", "0".repeat(Self::MAX_N));
+        for _ in 0..MAX_N - 1 {
+            println!("{}", "0".repeat(MAX_N));
         }
     }
 }
