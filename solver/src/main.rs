@@ -460,53 +460,84 @@ impl Solver {
     }
 
     /// Compute vertex cover for cells NOT already covered.
-    /// `pre_covered[i][j]` = true means cell (i,j) is already covered (skip it).
-    /// Returns: (robot output strings, total state cost)
+    /// Tries two strategies and returns the cheaper one:
+    /// 1. "Broken" segments: break at walls AND covered cells (current)
+    /// 2. "Mega" segments: break only at walls (allows redundant coverage)
     fn vertex_cover_for_uncovered(&self, pre_covered: &[Vec<bool>]) -> (Vec<String>, i64) {
+        let (robots_broken, cost_broken) = self.vc_internal(pre_covered, true);
+        let (robots_mega, cost_mega) = self.vc_internal(pre_covered, false);
+        if cost_mega < cost_broken {
+            (robots_mega, cost_mega)
+        } else {
+            (robots_broken, cost_broken)
+        }
+    }
+
+    /// Internal VC computation.
+    /// `break_at_covered=true`: segments break at walls AND pre-covered cells (fine-grained)
+    /// `break_at_covered=false`: segments break only at walls (mega-segments, may cover already-covered cells)
+    fn vc_internal(&self, pre_covered: &[Vec<bool>], break_at_covered: bool) -> (Vec<String>, i64) {
         let n = self.n;
 
-        // Build row segments restricted to uncovered cells
+        // Build row segments
         let mut row_segs: Vec<(usize, usize, usize)> = Vec::new();
         let mut row_seg_id = vec![vec![usize::MAX; n]; n];
         for i in 0..n {
             let mut j = 0;
             while j < n {
-                // Skip covered cells
-                if pre_covered[i][j] {
+                if break_at_covered && pre_covered[i][j] {
                     j += 1;
                     continue;
                 }
                 let start = j;
-                // Extend segment: stop at wall OR covered cell
-                while j < n - 1 && !self.v[i][j] && !pre_covered[i][j + 1] {
+                while j < n - 1 && !self.v[i][j] && !(break_at_covered && pre_covered[i][j + 1]) {
                     j += 1;
+                }
+                // For mega segments, skip if no uncovered cell exists in this segment
+                if !break_at_covered {
+                    let has_uncovered = (start..=j).any(|jj| !pre_covered[i][jj]);
+                    if !has_uncovered {
+                        j += 1;
+                        continue;
+                    }
                 }
                 let idx = row_segs.len();
                 for jj in start..=j {
-                    row_seg_id[i][jj] = idx;
+                    if !pre_covered[i][jj] {
+                        row_seg_id[i][jj] = idx;
+                    }
                 }
                 row_segs.push((i, start, j));
                 j += 1;
             }
         }
 
-        // Build column segments restricted to uncovered cells
+        // Build column segments
         let mut col_segs: Vec<(usize, usize, usize)> = Vec::new();
         let mut col_seg_id = vec![vec![usize::MAX; n]; n];
         for j in 0..n {
             let mut i = 0;
             while i < n {
-                if pre_covered[i][j] {
+                if break_at_covered && pre_covered[i][j] {
                     i += 1;
                     continue;
                 }
                 let start = i;
-                while i < n - 1 && !self.h[i][j] && !pre_covered[i + 1][j] {
+                while i < n - 1 && !self.h[i][j] && !(break_at_covered && pre_covered[i + 1][j]) {
                     i += 1;
+                }
+                if !break_at_covered {
+                    let has_uncovered = (start..=i).any(|ii| !pre_covered[ii][j]);
+                    if !has_uncovered {
+                        i += 1;
+                        continue;
+                    }
                 }
                 let idx = col_segs.len();
                 for ii in start..=i {
-                    col_seg_id[ii][j] = idx;
+                    if !pre_covered[ii][j] {
+                        col_seg_id[ii][j] = idx;
+                    }
                 }
                 col_segs.push((j, start, i));
                 i += 1;
