@@ -3,7 +3,7 @@ tools_zip_url = "https://img.atcoder.jp/masters2026-qual/Cy1HtjaW.zip"
 
 # Directory configuration
 [paths]
-input_dir = "./tools/in"
+input_dir = "./tools/inA"
 output_dir = "./tools/out"
 visualizer_dir = "./results/visualizations"
 html_output = "./results/index.html"
