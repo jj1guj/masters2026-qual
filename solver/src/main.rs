@@ -366,7 +366,7 @@ impl Solver {
             let op = if selected.is_empty() {
                 0 // must add
             } else {
-                rng.gen_range(0..3)
+                rng.random_range(0..3)
             };
 
             let mut new_selected = selected.clone();
@@ -377,18 +377,18 @@ impl Solver {
                         iter_count += 1;
                         continue;
                     }
-                    let ci = rng.gen_range(0, num_candidates);
+                    let ci = rng.random_range(0..num_candidates);
                     new_selected.push(ci);
                 }
                 1 => {
                     // Remove a random snake
-                    let idx = rng.gen_range(0..new_selected.len());
+                    let idx = rng.random_range(0..new_selected.len());
                     new_selected.remove(idx);
                 }
                 2 => {
                     // Replace a random snake with a random candidate
-                    let idx = rng.gen_range(0..new_selected.len());
-                    let ci = rng.gen_range(0..num_candidates);
+                    let idx = rng.random_range(0..new_selected.len());
+                    let ci = rng.random_range(0..num_candidates);
                     new_selected[idx] = ci;
                 }
                 _ => unreachable!(),
@@ -401,7 +401,7 @@ impl Solver {
                 true
             } else {
                 let prob = (-delta as f64 / temperature).exp();
-                rng.r#gen::<f64>() < prob
+                rng.random::<f64>() < prob
             };
 
             if accept {
