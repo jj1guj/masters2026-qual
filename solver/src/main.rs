@@ -5,6 +5,61 @@ const K: usize = MAX_N * MAX_N;
 const DX: [i32; 4] = [-1, 0, 0, 1];
 const DY: [i32; 4] = [0, -1, 1, 0];
 
+/// 6-state snake automaton
+const SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
+    (0, 0, 1, 1),
+    (0, 2, 1, 2),
+    (1, 3, 1, 3),
+    (0, 3, 2, 4),
+    (0, 5, 2, 5),
+    (2, 0, 2, 0),
+];
+
+/// 6-state reverse snake automaton (mirror: swaps R<->L)
+const REVERSE_SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
+    (0, 0, 2, 1),
+    (0, 2, 2, 2),
+    (2, 3, 2, 3),
+    (0, 3, 1, 4),
+    (0, 5, 1, 5),
+    (1, 0, 1, 0),
+];
+
+/// 2-state automaton A
+const AUTO_2S_A: [(u8, usize, u8, usize); 2] = [(2, 1, 1, 1), (0, 0, 2, 1)];
+/// Mirror of 2S_A
+const AUTO_2S_B: [(u8, usize, u8, usize); 2] = [(0, 1, 2, 0), (2, 0, 1, 0)];
+
+/// 2-state automaton C
+const AUTO_2S_C: [(u8, usize, u8, usize); 2] = [(1, 1, 2, 1), (0, 0, 1, 1)];
+/// Mirror of 2S_C
+const AUTO_2S_D: [(u8, usize, u8, usize); 2] = [(0, 1, 1, 0), (1, 0, 2, 0)];
+
+/// 3-state automaton A
+const AUTO_3S_A: [(u8, usize, u8, usize); 3] = [(1, 1, 2, 2), (2, 2, 2, 1), (0, 0, 1, 2)];
+/// Mirror of 3S_A
+const AUTO_3S_B: [(u8, usize, u8, usize); 3] = [(2, 1, 1, 2), (1, 2, 1, 1), (0, 0, 2, 2)];
+
+/// All automaton definitions: (table slice, num_states)
+struct AutomatonDef {
+    table: &'static [(u8, usize, u8, usize)],
+}
+
+const AUTOMATA: [AutomatonDef; 8] = [
+    AutomatonDef {
+        table: &SNAKE_AUTOMATON,
+    },
+    AutomatonDef {
+        table: &REVERSE_SNAKE_AUTOMATON,
+    },
+    AutomatonDef { table: &AUTO_2S_A },
+    AutomatonDef { table: &AUTO_2S_B },
+    AutomatonDef { table: &AUTO_2S_C },
+    AutomatonDef { table: &AUTO_2S_D },
+    AutomatonDef { table: &AUTO_3S_A },
+    AutomatonDef { table: &AUTO_3S_B },
+];
+
 struct Solver {
     n: usize,
     a_k: i64,
@@ -247,23 +302,16 @@ impl Solver {
         }
     }
 
-    /// 6状態ジグザグオートマトンをシミュレーションし、周期的行動中に訪れるマスを返す
-    fn simulate_reachable(
+    /// 任意のオートマトンでシミュレーションし、周期的行動中に訪れるマスを返す
+    fn simulate_reachable_with(
         &self,
         start: (usize, usize),
         start_dir: usize,
+        auto_table: &[(u8, usize, u8, usize)],
     ) -> [[bool; MAX_N]; MAX_N] {
-        // action: 0=Forward, 1=TurnRight, 2=TurnLeft
-        let auto_table: [(u8, usize, u8, usize); 6] = [
-            (0, 0, 1, 1), // F 0 R 1
-            (0, 2, 1, 2), // F 2 R 2
-            (1, 3, 1, 3), // R 3 R 3
-            (0, 3, 2, 4), // F 3 L 4
-            (0, 5, 2, 5), // F 5 L 5
-            (2, 0, 2, 0), // L 0 L 0
-        ];
-
-        let mut visited = [[[[false; 6]; 4]; MAX_N]; MAX_N];
+        let num_states = auto_table.len();
+        // visited: row x col x dir x state (max 6 states)
+        let mut visited = vec![vec![vec![vec![false; num_states]; 4]; MAX_N]; MAX_N];
         let mut history: Vec<(usize, usize, usize, usize)> = Vec::new();
 
         let (mut row, mut col) = start;
@@ -321,6 +369,25 @@ impl Solver {
             }
         }
         (area_map, count)
+    }
+
+    /// 全オートマトンで開始位置・方向を試し、全セルをカバーできる構成があれば返す
+    fn try_cover_cells(
+        &self,
+        cells: &[(usize, usize)],
+        starts: &[(usize, usize)],
+    ) -> Option<((usize, usize), usize, usize)> {
+        for (auto_idx, auto_def) in AUTOMATA.iter().enumerate() {
+            for &start in starts {
+                for dir in 0..4 {
+                    let reachable = self.simulate_reachable_with(start, dir, auto_def.table);
+                    if cells.iter().all(|&(r, c)| reachable[r][c]) {
+                        return Some((start, dir, auto_idx));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// 設置した壁を破壊して隣接領域をマージする試行を行う
@@ -393,24 +460,14 @@ impl Solver {
 
                 let cells_a = &region_cells[*ra as usize];
                 let cells_b = &region_cells[*rb as usize];
+                let mut merged_cells: Vec<(usize, usize)> = Vec::new();
+                merged_cells.extend_from_slice(cells_a);
+                merged_cells.extend_from_slice(cells_b);
 
-                // 複数の開始位置・方向でシミュレーション
                 let starts = [cells_a[0], cells_b[0]];
-                let mut success = false;
+                let result = self.try_cover_cells(&merged_cells, &starts);
 
-                'search: for &start in &starts {
-                    for dir in 0..4 {
-                        let reachable = self.simulate_reachable(start, dir);
-                        let all_covered = cells_a.iter().all(|&(r, c)| reachable[r][c])
-                            && cells_b.iter().all(|&(r, c)| reachable[r][c]);
-                        if all_covered {
-                            success = true;
-                            break 'search;
-                        }
-                    }
-                }
-
-                if success {
+                if result.is_some() {
                     // マージ成功: v_out/h_out を更新
                     for &(is_v, i, j) in walls {
                         if is_v {
@@ -439,8 +496,9 @@ impl Solver {
         }
     }
 
-    /// 各領域のロボット配置位置と方向を決定する
-    fn find_robot_configs(&self) -> Vec<((usize, usize), usize)> {
+    /// 各領域のロボット配置位置・方向・オートマトンを決定する
+    /// 戻り値: ((row, col), dir, automaton_index)
+    fn find_robot_configs(&self) -> Vec<((usize, usize), usize, usize)> {
         let (area_map, num_regions) = self.build_area_map();
         let mut configs = Vec::new();
 
@@ -454,58 +512,59 @@ impl Solver {
                 }
             }
 
-            let mut found = false;
-            // まず左上セルから全方向を試す
+            // まず左上セルで全オートマトン・全方向を試す
             let start = cells[0];
-            for dir in 0..4 {
-                let reachable = self.simulate_reachable(start, dir);
-                if cells.iter().all(|&(r, c)| reachable[r][c]) {
-                    configs.push((start, dir));
-                    found = true;
-                    break;
-                }
+            if let Some(config) = self.try_cover_cells(&cells, &[start]) {
+                configs.push(config);
+                continue;
             }
 
             // 見つからなければ他のセルも試す
-            if !found {
-                'outer: for &cell in &cells {
-                    for dir in 0..4 {
-                        let reachable = self.simulate_reachable(cell, dir);
-                        if cells.iter().all(|&(r, c)| reachable[r][c]) {
-                            configs.push((cell, dir));
-                            found = true;
-                            break 'outer;
-                        }
-                    }
-                }
-            }
-
-            if !found {
-                // フォールバック
-                configs.push((start, 1));
+            if let Some(config) = self.try_cover_cells(&cells, &cells) {
+                configs.push(config);
+            } else {
+                // フォールバック: snake automaton, right
+                configs.push((start, 1, 0));
             }
         }
 
         configs
     }
 
+    /// オートマトンテーブルを出力形式の文字列に変換
+    fn format_automaton(table: &[(u8, usize, u8, usize)]) -> Vec<String> {
+        let action_char = |a: u8| -> char {
+            match a {
+                0 => 'F',
+                1 => 'R',
+                2 => 'L',
+                _ => unreachable!(),
+            }
+        };
+        table
+            .iter()
+            .map(|&(a0, b0, a1, b1)| {
+                format!("{} {} {} {}", action_char(a0), b0, action_char(a1), b1)
+            })
+            .collect()
+    }
+
     /// ロボットと壁の情報を出力する
     fn output(
         &self,
-        configs: &[((usize, usize), usize)],
+        configs: &[((usize, usize), usize, usize)],
         v_out: &[[i32; MAX_N - 1]; MAX_N],
         h_out: &[[i32; MAX_N]; MAX_N - 1],
     ) {
         let dir_chars = ['U', 'R', 'D', 'L'];
         println!("{}", configs.len());
-        for &((row, col), dir) in configs {
-            println!("6 {} {} {}", row, col, dir_chars[dir]);
-            println!("F 0 R 1");
-            println!("F 2 R 2");
-            println!("R 3 R 3");
-            println!("F 3 L 4");
-            println!("F 5 L 5");
-            println!("L 0 L 0");
+        for &((row, col), dir, auto_idx) in configs {
+            let table = AUTOMATA[auto_idx].table;
+            let num_states = table.len();
+            println!("{} {} {} {}", num_states, row, col, dir_chars[dir]);
+            for line in Self::format_automaton(table) {
+                println!("{}", line);
+            }
         }
 
         for i in 0..MAX_N {
