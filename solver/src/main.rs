@@ -496,6 +496,168 @@ impl Solver {
         }
     }
 
+    /// 3領域以上の同時マージを試行する。マージが1回でも成功したらtrueを返す。
+    fn try_merge_multi_regions(
+        &mut self,
+        v_out: &mut [[i32; MAX_N - 1]; MAX_N],
+        h_out: &mut [[i32; MAX_N]; MAX_N - 1],
+    ) -> bool {
+        let (area_map, num_regions) = self.build_area_map();
+        let nr = num_regions as usize;
+
+        // 各領域のセルを収集
+        let mut region_cells: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nr];
+        for i in 0..MAX_N {
+            for j in 0..MAX_N {
+                region_cells[area_map[i][j] as usize].push((i, j));
+            }
+        }
+
+        // 追加壁で隣接する領域ペアの壁情報を収集
+        let mut pair_walls: std::collections::BTreeMap<(usize, usize), Vec<(bool, usize, usize)>> =
+            std::collections::BTreeMap::new();
+
+        for i in 0..MAX_N {
+            for j in 0..MAX_N - 1 {
+                if v_out[i][j] == 1 {
+                    let a = area_map[i][j] as usize;
+                    let b = area_map[i][j + 1] as usize;
+                    if a != b {
+                        let key = (a.min(b), a.max(b));
+                        pair_walls.entry(key).or_default().push((true, i, j));
+                    }
+                }
+            }
+        }
+        for i in 0..MAX_N - 1 {
+            for j in 0..MAX_N {
+                if h_out[i][j] == 1 {
+                    let a = area_map[i][j] as usize;
+                    let b = area_map[i + 1][j] as usize;
+                    if a != b {
+                        let key = (a.min(b), a.max(b));
+                        pair_walls.entry(key).or_default().push((false, i, j));
+                    }
+                }
+            }
+        }
+
+        // 隣接リスト構築
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nr];
+        for &(a, b) in pair_walls.keys() {
+            adj[a].push(b);
+            adj[b].push(a);
+        }
+        for list in &mut adj {
+            list.sort();
+            list.dedup();
+        }
+
+        // BFS で連結部分集合を列挙（サイズ3〜max_group_size）
+        let max_group_size = 6usize;
+        let max_attempts = 5000usize;
+        let mut tried: std::collections::HashSet<Vec<usize>> = std::collections::HashSet::new();
+        let mut attempts = 0usize;
+
+        for start_r in 0..nr {
+            if adj[start_r].is_empty() {
+                continue;
+            }
+            let mut queue: std::collections::VecDeque<Vec<usize>> =
+                std::collections::VecDeque::new();
+            queue.push_back(vec![start_r]);
+
+            while let Some(group) = queue.pop_front() {
+                if attempts >= max_attempts {
+                    return false;
+                }
+
+                if group.len() >= 3 {
+                    let mut key = group.clone();
+                    key.sort();
+                    if tried.insert(key.clone()) {
+                        attempts += 1;
+
+                        // グループ内の全ペア間の追加壁を収集
+                        let mut walls_to_remove: Vec<(bool, usize, usize)> = Vec::new();
+                        for gi in 0..key.len() {
+                            for gj in (gi + 1)..key.len() {
+                                if let Some(ws) = pair_walls.get(&(key[gi], key[gj])) {
+                                    walls_to_remove.extend_from_slice(ws);
+                                }
+                            }
+                        }
+
+                        if !walls_to_remove.is_empty() {
+                            // 壁を一時除去
+                            for &(is_v, i, j) in &walls_to_remove {
+                                if is_v {
+                                    self.v[i][j] = false;
+                                } else {
+                                    self.h[i][j] = false;
+                                }
+                            }
+
+                            // 全セル・開始位置を収集
+                            let mut merged_cells: Vec<(usize, usize)> = Vec::new();
+                            let mut starts: Vec<(usize, usize)> = Vec::new();
+                            for &r in &key {
+                                merged_cells.extend_from_slice(&region_cells[r]);
+                                starts.push(region_cells[r][0]);
+                            }
+
+                            let result = self.try_cover_cells(&merged_cells, &starts);
+
+                            if result.is_some() {
+                                // マージ成功: 壁を除去確定
+                                for &(is_v, i, j) in &walls_to_remove {
+                                    if is_v {
+                                        v_out[i][j] = 0;
+                                    } else {
+                                        h_out[i][j] = 0;
+                                    }
+                                }
+                                return true;
+                            } else {
+                                // 壁を復元
+                                for &(is_v, i, j) in &walls_to_remove {
+                                    if is_v {
+                                        self.v[i][j] = true;
+                                    } else {
+                                        self.h[i][j] = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if group.len() >= max_group_size {
+                    continue;
+                }
+
+                // グループの隣接領域を追加（start_r より大きいもののみで重複排除）
+                let mut neighbors: Vec<usize> = Vec::new();
+                for &r in &group {
+                    for &nb in &adj[r] {
+                        if nb > start_r && !group.contains(&nb) && !neighbors.contains(&nb) {
+                            neighbors.push(nb);
+                        }
+                    }
+                }
+                neighbors.sort();
+
+                for nb in neighbors {
+                    let mut new_group = group.clone();
+                    new_group.push(nb);
+                    queue.push_back(new_group);
+                }
+            }
+        }
+
+        false
+    }
+
     /// 各領域のロボット配置位置・方向・オートマトンを決定する
     /// 戻り値: ((row, col), dir, automaton_index)
     fn find_robot_configs(&self) -> Vec<((usize, usize), usize, usize)> {
@@ -583,7 +745,12 @@ impl Solver {
 
     fn solve(&mut self) {
         let (mut v_out, mut h_out) = self.extend_walls();
-        self.try_merge_regions(&mut v_out, &mut h_out);
+        loop {
+            self.try_merge_regions(&mut v_out, &mut h_out);
+            if !self.try_merge_multi_regions(&mut v_out, &mut h_out) {
+                break;
+            }
+        }
         let configs = self.find_robot_configs();
         self.output(&configs, &v_out, &h_out);
     }
