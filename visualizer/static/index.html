@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Periodic Patrol Automata - Visualizer</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        header {
+            background: #16213e;
+            padding: 10px 20px;
+            border-bottom: 2px solid #0f3460;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        header h1 {
+            font-size: 1.2rem;
+            color: #e94560;
+        }
+
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        .left-panel {
+            width: 380px;
+            min-width: 380px;
+            background: #16213e;
+            border-right: 2px solid #0f3460;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .panel-section {
+            padding: 12px;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        .panel-section h3 {
+            font-size: 0.9rem;
+            color: #e94560;
+            margin-bottom: 8px;
+        }
+
+        textarea {
+            width: 100%;
+            background: #0a0a1a;
+            color: #e0e0e0;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            padding: 8px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11px;
+            resize: vertical;
+            line-height: 1.4;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #c23152;
+        }
+
+        .btn-primary:disabled {
+            background: #555;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: #0f3460;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #1a4a80;
+        }
+
+        .btn-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .right-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .canvas-container {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            position: relative;
+        }
+
+        canvas {
+            background: #0a0a1a;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+        }
+
+        .info-bar {
+            background: #16213e;
+            padding: 10px 20px;
+            border-top: 2px solid #0f3460;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            font-size: 0.85rem;
+        }
+
+        .info-item {
+            display: flex;
+            gap: 6px;
+        }
+
+        .info-label {
+            color: #888;
+        }
+
+        .info-value {
+            color: #e94560;
+            font-weight: bold;
+        }
+
+        .status {
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-top: 8px;
+        }
+
+        .status-error {
+            background: rgba(233, 69, 96, 0.2);
+            color: #e94560;
+            border: 1px solid #e94560;
+        }
+
+        .status-success {
+            background: rgba(46, 213, 115, 0.2);
+            color: #2ed573;
+            border: 1px solid #2ed573;
+        }
+
+        .status-info {
+            background: rgba(15, 52, 96, 0.5);
+            color: #70a1ff;
+            border: 1px solid #70a1ff;
+        }
+
+        #status-message {
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 80px;
+            overflow-y: auto;
+        }
+
+        .legend {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            padding: 8px 12px;
+            font-size: 0.75rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 2px;
+            border: 1px solid #333;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            display: none;
+        }
+
+        select {
+            background: #0a0a1a;
+            color: #e0e0e0;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.8rem;
+        }
+
+        select:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #555;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .controls-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Periodic Patrol Automata - Visualizer</h1>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#2a2a4a;"></div>
+                    <span>未巡回</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#2ed573;"></div>
+                    <span>巡回済み (周期)</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#ffa502;"></div>
+                    <span>巡回前のみ</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#333; border:2px solid #e94560;"></div>
+                    <span>既存壁</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#333; border:2px solid #70a1ff;"></div>
+                    <span>追加壁</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:#e94560;"></div>
+                    <span>ロボット</span>
+                </div>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="panel-section">
+                    <h3>入力生成</h3>
+                    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+                        <label style="font-size:0.85rem;color:#ccc;">Seed:</label>
+                        <input type="number" id="seed-input" min="0" value="0"
+                            style="flex:1;padding:4px 6px;background:#1a1a2e;color:#fff;border:1px solid #444;border-radius:4px;font-size:0.85rem;">
+                        <label style="font-size:0.85rem;color:#ccc;">問題:</label>
+                        <select id="problem-select"
+                            style="padding:4px 6px;background:#1a1a2e;color:#fff;border:1px solid #444;border-radius:4px;font-size:0.85rem;">
+                            <option value="A" selected>A</option>
+                            <option value="B">B</option>
+                            <option value="C">C</option>
+                        </select>
+                    </div>
+                    <div class="btn-row">
+                        <button class="btn btn-primary" id="generate-btn" onclick="generateInput()">🎲 生成</button>
+                        <span id="generate-status" style="font-size:0.8rem;color:#aaa;"></span>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>入力データ</h3>
+                    <textarea id="input-data" rows="12"
+                        placeholder="入力データをここに貼り付け...&#10;例: 20 0 1 1000&#10;0010000000000000000&#10;..."></textarea>
+                    <div class="btn-row">
+                        <label class="btn btn-secondary file-input-wrapper">
+                            📁 ファイル読込
+                            <input type="file" id="input-file" accept=".txt,.in">
+                        </label>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>出力データ</h3>
+                    <textarea id="output-data" rows="12"
+                        placeholder="出力データをここに貼り付け...&#10;例: 400&#10;1 0 0 U&#10;R 0 R 0&#10;..."></textarea>
+                    <div class="btn-row">
+                        <label class="btn btn-secondary file-input-wrapper">
+                            📁 ファイル読込
+                            <input type="file" id="output-file" accept=".txt,.out">
+                        </label>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>ソルバー実行</h3>
+                    <div class="btn-row">
+                        <button id="run-solver-btn" class="btn btn-primary" onclick="runSolver()">
+                            ▶ ビルド &amp; 実行
+                        </button>
+                    </div>
+                    <div id="solver-status"></div>
+                </div>
+
+                <div class="panel-section">
+                    <h3>表示設定</h3>
+                    <div class="controls-row">
+                        <label>
+                            <input type="checkbox" id="show-robots" checked> ロボット初期位置
+                        </label>
+                    </div>
+                    <div class="controls-row">
+                        <label>
+                            <input type="checkbox" id="show-routes" checked> 巡回経路
+                        </label>
+                    </div>
+                    <div class="controls-row">
+                        <label>
+                            <input type="checkbox" id="show-head-only"> 周期前経路も表示
+                        </label>
+                    </div>
+                    <div class="controls-row">
+                        <label>ロボット選択:</label>
+                        <select id="robot-select">
+                            <option value="-1">全て</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="panel-section">
+                    <div id="status-message"></div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="canvas-container">
+                    <canvas id="grid-canvas" width="700" height="700"></canvas>
+                </div>
+                <div class="info-bar" id="info-bar">
+                    <div class="info-item">
+                        <span class="info-label">N:</span>
+                        <span class="info-value" id="info-n">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">A_K:</span>
+                        <span class="info-value" id="info-ak">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">A_M:</span>
+                        <span class="info-value" id="info-am">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">A_W:</span>
+                        <span class="info-value" id="info-aw">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">K:</span>
+                        <span class="info-value" id="info-k">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">M:</span>
+                        <span class="info-value" id="info-m">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">W:</span>
+                        <span class="info-value" id="info-w">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">V (cost):</span>
+                        <span class="info-value" id="info-v">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">Score:</span>
+                        <span class="info-value" id="info-score">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // State
+        // ============================================================
+        let currentInputData = null;   // parsed input for canvas drawing
+        let currentScoreData = null;   // full score response for canvas
+        let debounceTimer = null;
+
+        // ============================================================
+        // File loading
+        // ============================================================
+        document.getElementById('input-file').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (ev) {
+                document.getElementById('input-data').value = ev.target.result;
+                onInputChanged();
+            };
+            reader.readAsText(file);
+        });
+        document.getElementById('output-file').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (ev) {
+                document.getElementById('output-data').value = ev.target.result;
+                onOutputChanged();
+            };
+            reader.readAsText(file);
+        });
+
+        // ============================================================
+        // Auto-visualization on input change
+        // ============================================================
+        document.getElementById('input-data').addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(onInputChanged, 400);
+        });
+        document.getElementById('output-data').addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(onOutputChanged, 400);
+        });
+        document.getElementById('show-robots').addEventListener('change', draw);
+        document.getElementById('show-routes').addEventListener('change', draw);
+        document.getElementById('show-head-only').addEventListener('change', draw);
+        document.getElementById('robot-select').addEventListener('change', draw);
+
+        // Auto-generate input when seed or problem type changes
+        let generateTimer = null;
+        document.getElementById('seed-input').addEventListener('input', () => {
+            clearTimeout(generateTimer);
+            generateTimer = setTimeout(generateInput, 400);
+        });
+        document.getElementById('problem-select').addEventListener('change', () => {
+            clearTimeout(generateTimer);
+            generateTimer = setTimeout(generateInput, 400);
+        });
+
+        function onInputChanged() {
+            const inputText = document.getElementById('input-data').value.trim();
+            if (!inputText) {
+                currentInputData = null;
+                currentScoreData = null;
+                clearCanvas();
+                return;
+            }
+            // Parse input locally for grid display
+            try {
+                currentInputData = parseInput(inputText);
+                drawInputOnly();
+            } catch (e) {
+                setStatus('error', 'Input parse error: ' + e.message);
+                return;
+            }
+            // If output is also present, re-score
+            const outputText = document.getElementById('output-data').value.trim();
+            if (outputText) {
+                requestScore(inputText, outputText);
+            }
+        }
+
+        function onOutputChanged() {
+            const inputText = document.getElementById('input-data').value.trim();
+            const outputText = document.getElementById('output-data').value.trim();
+            if (!inputText) {
+                setStatus('error', '先に入力データを入力してください');
+                return;
+            }
+            if (!outputText) {
+                currentScoreData = null;
+                if (currentInputData) drawInputOnly();
+                return;
+            }
+            requestScore(inputText, outputText);
+        }
+
+        async function requestScore(inputText, outputText) {
+            try {
+                const resp = await fetch('/api/score', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ input_data: inputText, output_data: outputText })
+                });
+                const data = await resp.json();
+                currentScoreData = data;
+                updateInfoBar(data);
+                updateRobotSelect(data);
+                if (data.success) {
+                    setStatus('success', `Score = ${data.score}`);
+                } else {
+                    setStatus('error', data.error || 'Unknown error');
+                }
+                draw();
+            } catch (e) {
+                setStatus('error', 'Server error: ' + e.message);
+            }
+        }
+
+        // ============================================================
+        // Solver execution
+        // ============================================================
+        async function runSolver() {
+            const inputText = document.getElementById('input-data').value.trim();
+            if (!inputText) {
+                setStatus('error', '先に入力データを入力してください');
+                return;
+            }
+            const btn = document.getElementById('run-solver-btn');
+            btn.disabled = true;
+            const statusEl = document.getElementById('solver-status');
+            statusEl.innerHTML = '<span class="spinner"></span> ビルド & 実行中...';
+
+            try {
+                const resp = await fetch('/api/run-solver', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ input_data: inputText })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    document.getElementById('output-data').value = data.output;
+                    statusEl.innerHTML = '<div class="status status-success">実行成功</div>';
+                    if (data.stderr) {
+                        statusEl.innerHTML += '<pre style="font-size:0.75rem;color:#aaa;margin-top:4px;max-height:60px;overflow-y:auto;">' + escapeHtml(data.stderr) + '</pre>';
+                    }
+                    onOutputChanged();
+                } else {
+                    statusEl.innerHTML = '<div class="status status-error">実行失敗</div>';
+                    statusEl.innerHTML += '<pre style="font-size:0.75rem;color:#e94560;margin-top:4px;max-height:100px;overflow-y:auto;">' + escapeHtml(data.stderr) + '</pre>';
+                }
+            } catch (e) {
+                statusEl.innerHTML = '<div class="status status-error">サーバー通信エラー: ' + escapeHtml(e.message) + '</div>';
+            }
+            btn.disabled = false;
+        }
+
+        // ============================================================
+        // Input generation from seed
+        // ============================================================
+        async function generateInput() {
+            const seed = parseInt(document.getElementById('seed-input').value);
+            const problem = document.getElementById('problem-select').value;
+            const btn = document.getElementById('generate-btn');
+            const statusEl = document.getElementById('generate-status');
+            btn.disabled = true;
+            statusEl.textContent = '生成中...';
+
+            try {
+                const resp = await fetch('/api/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ seed: seed, problem: problem })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    document.getElementById('input-data').value = data.input_data;
+                    statusEl.textContent = `Seed ${seed} (${problem}) 生成完了`;
+                    onInputChanged();
+                } else {
+                    statusEl.textContent = 'エラー: ' + data.error;
+                }
+            } catch (e) {
+                statusEl.textContent = 'サーバーエラー: ' + e.message;
+            }
+            btn.disabled = false;
+        }
+
+        // ============================================================
+        // Input parser (client-side, for displaying grid before scoring)
+        // ============================================================
+        function parseInput(text) {
+            const tokens = text.trim().split(/\s+/);
+            let idx = 0;
+            const n = parseInt(tokens[idx++]);
+            const ak = parseInt(tokens[idx++]);
+            const am = parseInt(tokens[idx++]);
+            const aw = parseInt(tokens[idx++]);
+            const wall_v = [];
+            for (let i = 0; i < n; i++) {
+                wall_v.push(tokens[idx++]);
+            }
+            const wall_h = [];
+            for (let i = 0; i < n - 1; i++) {
+                wall_h.push(tokens[idx++]);
+            }
+            return { n, ak, am, aw, wall_v, wall_h };
+        }
+
+        // ============================================================
+        // Canvas drawing
+        // ============================================================
+        const COLORS = [
+            '#e94560', '#70a1ff', '#2ed573', '#ffa502', '#a29bfe',
+            '#fd79a8', '#00cec9', '#fdcb6e', '#6c5ce7', '#ff7675',
+            '#55efc4', '#fab1a0', '#74b9ff', '#ff6b6b', '#48dbfb',
+            '#f368e0', '#ff9ff3', '#54a0ff', '#5f27cd', '#01a3a4'
+        ];
+
+        function getCanvas() {
+            return document.getElementById('grid-canvas');
+        }
+        function getCtx() {
+            return getCanvas().getContext('2d');
+        }
+
+        function clearCanvas() {
+            const canvas = getCanvas();
+            const ctx = getCtx();
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function drawInputOnly() {
+            if (!currentInputData) return;
+            currentScoreData = null;
+            updateInfoBarInput(currentInputData);
+            draw();
+        }
+
+        function draw() {
+            const canvas = getCanvas();
+            const ctx = getCtx();
+            const data = currentInputData;
+            if (!data) { clearCanvas(); return; }
+
+            const n = data.n;
+            const padding = 30;
+            const cellSize = Math.floor((Math.min(canvas.width, canvas.height) - 2 * padding) / n);
+            const offsetX = padding;
+            const offsetY = padding;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw cells
+            const showRoutes = document.getElementById('show-routes').checked;
+            const showRobots = document.getElementById('show-robots').checked;
+            const showHeadOnly = document.getElementById('show-head-only').checked;
+            const selectedRobot = parseInt(document.getElementById('robot-select').value);
+
+            // Background cells
+            for (let i = 0; i < n; i++) {
+                for (let j = 0; j < n; j++) {
+                    const x = offsetX + j * cellSize;
+                    const y = offsetY + i * cellSize;
+
+                    let color = '#2a2a4a'; // default: not patrolled
+                    if (currentScoreData && currentScoreData.checked) {
+                        if (currentScoreData.checked[i] && currentScoreData.checked[i][j]) {
+                            color = 'rgba(46, 213, 115, 0.25)';
+                        }
+                    }
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, cellSize, cellSize);
+
+                    // Cell border
+                    ctx.strokeStyle = '#333';
+                    ctx.lineWidth = 0.5;
+                    ctx.strokeRect(x, y, cellSize, cellSize);
+                }
+            }
+
+            // Head-only visited cells (visited before periodic, but not in periodic path)
+            if (currentScoreData && currentScoreData.routes && showHeadOnly) {
+                const headVisited = Array.from({ length: n }, () => Array(n).fill(false));
+                const tailVisited = Array.from({ length: n }, () => Array(n).fill(false));
+                const routes = currentScoreData.routes;
+                for (let k = 0; k < routes.length; k++) {
+                    if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                    for (const [i, j] of routes[k].tail) { tailVisited[i][j] = true; }
+                    for (const [i, j] of routes[k].head) {
+                        if (!tailVisited[i][j]) headVisited[i][j] = true;
+                    }
+                }
+                for (let i = 0; i < n; i++) {
+                    for (let j = 0; j < n; j++) {
+                        if (headVisited[i][j]) {
+                            const x = offsetX + j * cellSize;
+                            const y = offsetY + i * cellSize;
+                            ctx.fillStyle = 'rgba(255, 165, 2, 0.2)';
+                            ctx.fillRect(x, y, cellSize, cellSize);
+                        }
+                    }
+                }
+            }
+
+            // Draw route paths
+            if (currentScoreData && currentScoreData.routes && showRoutes) {
+                const routes = currentScoreData.routes;
+                for (let k = 0; k < routes.length; k++) {
+                    if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                    const color = COLORS[k % COLORS.length];
+                    const tail = routes[k].tail;
+                    if (tail.length > 1) {
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = 1.5;
+                        ctx.globalAlpha = 0.5;
+                        ctx.beginPath();
+                        for (let t = 0; t < tail.length; t++) {
+                            const [ci, cj] = tail[t];
+                            const cx = offsetX + cj * cellSize + cellSize / 2;
+                            const cy = offsetY + ci * cellSize + cellSize / 2;
+                            if (t === 0) ctx.moveTo(cx, cy);
+                            else ctx.lineTo(cx, cy);
+                        }
+                        ctx.stroke();
+                        ctx.globalAlpha = 1.0;
+                    }
+                }
+            }
+
+            // Draw walls (original input walls)
+            const wallWidth = 3;
+            // Vertical walls (between (i,j) and (i,j+1))
+            for (let i = 0; i < n; i++) {
+                for (let j = 0; j < n - 1; j++) {
+                    const isOriginal = data.wall_v[i] && data.wall_v[i][j] === '1';
+                    let isAdded = false;
+                    if (currentScoreData && currentScoreData.wall_v_combined) {
+                        isAdded = currentScoreData.wall_v_combined[i] && currentScoreData.wall_v_combined[i][j] === 1 && !isOriginal;
+                    }
+                    if (isOriginal || isAdded) {
+                        const x = offsetX + (j + 1) * cellSize;
+                        const y1 = offsetY + i * cellSize;
+                        const y2 = offsetY + (i + 1) * cellSize;
+                        ctx.strokeStyle = isOriginal ? '#e94560' : '#70a1ff';
+                        ctx.lineWidth = isOriginal ? wallWidth : wallWidth;
+                        ctx.beginPath();
+                        ctx.moveTo(x, y1);
+                        ctx.lineTo(x, y2);
+                        ctx.stroke();
+                    }
+                }
+            }
+            // Horizontal walls (between (i,j) and (i+1,j))
+            for (let i = 0; i < n - 1; i++) {
+                for (let j = 0; j < n; j++) {
+                    const isOriginal = data.wall_h[i] && data.wall_h[i][j] === '1';
+                    let isAdded = false;
+                    if (currentScoreData && currentScoreData.wall_h_combined) {
+                        isAdded = currentScoreData.wall_h_combined[i] && currentScoreData.wall_h_combined[i][j] === 1 && !isOriginal;
+                    }
+                    if (isOriginal || isAdded) {
+                        const y = offsetY + (i + 1) * cellSize;
+                        const x1 = offsetX + j * cellSize;
+                        const x2 = offsetX + (j + 1) * cellSize;
+                        ctx.strokeStyle = isOriginal ? '#e94560' : '#70a1ff';
+                        ctx.lineWidth = wallWidth;
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y);
+                        ctx.lineTo(x2, y);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            // Draw outer boundary
+            ctx.strokeStyle = '#e94560';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(offsetX, offsetY, n * cellSize, n * cellSize);
+
+            // Draw robots initial positions
+            if (currentScoreData && currentScoreData.robots && showRobots) {
+                const dirArrows = ['↑', '→', '↓', '←'];
+                const robots = currentScoreData.robots;
+                for (let k = 0; k < robots.length; k++) {
+                    if (selectedRobot >= 0 && k !== selectedRobot) continue;
+                    const r = robots[k];
+                    const cx = offsetX + r.j * cellSize + cellSize / 2;
+                    const cy = offsetY + r.i * cellSize + cellSize / 2;
+                    const color = COLORS[k % COLORS.length];
+
+                    // Robot circle
+                    ctx.fillStyle = color;
+                    ctx.globalAlpha = 0.8;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, cellSize * 0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+
+                    // Direction arrow
+                    ctx.fillStyle = '#fff';
+                    ctx.font = `${Math.floor(cellSize * 0.45)}px sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(dirArrows[r.d], cx, cy);
+                }
+            }
+
+            // Draw grid coordinates
+            ctx.fillStyle = '#666';
+            ctx.font = '10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            for (let j = 0; j < n; j++) {
+                ctx.fillText(j.toString(), offsetX + j * cellSize + cellSize / 2, offsetY - 12);
+            }
+            for (let i = 0; i < n; i++) {
+                ctx.textAlign = 'right';
+                ctx.fillText(i.toString(), offsetX - 6, offsetY + i * cellSize + cellSize / 2);
+            }
+        }
+
+        // ============================================================
+        // Info bar & status
+        // ============================================================
+        function updateInfoBarInput(data) {
+            document.getElementById('info-n').textContent = data.n;
+            document.getElementById('info-ak').textContent = data.ak;
+            document.getElementById('info-am').textContent = data.am;
+            document.getElementById('info-aw').textContent = data.aw;
+            document.getElementById('info-k').textContent = '-';
+            document.getElementById('info-m').textContent = '-';
+            document.getElementById('info-w').textContent = '-';
+            document.getElementById('info-v').textContent = '-';
+            document.getElementById('info-score').textContent = '-';
+        }
+
+        function updateInfoBar(data) {
+            document.getElementById('info-n').textContent = data.n || '-';
+            document.getElementById('info-ak').textContent = data.ak ?? '-';
+            document.getElementById('info-am').textContent = data.am ?? '-';
+            document.getElementById('info-aw').textContent = data.aw ?? '-';
+            document.getElementById('info-k').textContent = data.k ?? '-';
+            document.getElementById('info-m').textContent = data.m_total ?? '-';
+            document.getElementById('info-w').textContent = data.w ?? '-';
+            document.getElementById('info-v').textContent = data.v_cost ?? '-';
+            document.getElementById('info-score').textContent = data.score ?? '-';
+        }
+
+        function updateRobotSelect(data) {
+            const sel = document.getElementById('robot-select');
+            const currentVal = sel.value;
+            sel.innerHTML = '<option value="-1">全て</option>';
+            if (data && data.robots) {
+                for (let k = 0; k < data.robots.length; k++) {
+                    const opt = document.createElement('option');
+                    opt.value = k;
+                    opt.textContent = `Robot ${k} (${data.robots[k].i},${data.robots[k].j})`;
+                    sel.appendChild(opt);
+                }
+            }
+            sel.value = currentVal;
+        }
+
+        function setStatus(type, message) {
+            const el = document.getElementById('status-message');
+            el.className = 'status status-' + type;
+            el.textContent = message;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ============================================================
+        // Responsive canvas
+        // ============================================================
+        function resizeCanvas() {
+            const container = document.querySelector('.canvas-container');
+            const canvas = getCanvas();
+            const size = Math.min(container.clientWidth - 40, container.clientHeight - 40, 800);
+            canvas.width = Math.max(size, 400);
+            canvas.height = Math.max(size, 400);
+            draw();
+        }
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('load', resizeCanvas);
+    </script>
+</body>
+
+</html>

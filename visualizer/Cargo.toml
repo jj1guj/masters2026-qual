@@ -1,0 +1,17 @@
+[package]
+name = "visualizer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "visualizer"
+path = "src/main.rs"
+
+[dependencies]
+actix-web = "4"
+actix-cors = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rand = "0.8"
+rand_chacha = "0.3"
