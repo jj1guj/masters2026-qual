@@ -140,14 +140,9 @@ impl Solver {
         }
     }
 
-    /// 壁を縦横に伸ばし、長方形化する。追加した壁を (v_out, h_out) で返す。
-    fn extend_walls(&mut self) -> ([[i32; MAX_N - 1]; MAX_N], [[i32; MAX_N]; MAX_N - 1]) {
-        let mut v_out = [[0i32; MAX_N - 1]; MAX_N];
-        let mut h_out = [[0i32; MAX_N]; MAX_N - 1];
-
-        // 縦方向: 各列境界 j について壁を上下に伸ばす
+    /// 縦壁を下方向に伸ばす
+    fn extend_v_down(&mut self, v_out: &mut [[i32; MAX_N - 1]; MAX_N]) {
         for j in 0..MAX_N - 1 {
-            // 下方向に伸ばす
             for i in 0..MAX_N {
                 if self.v[i][j] || v_out[i][j] == 1 {
                     for r in (i + 1)..MAX_N {
@@ -165,7 +160,12 @@ impl Solver {
                     }
                 }
             }
-            // 上方向に伸ばす
+        }
+    }
+
+    /// 縦壁を上方向に伸ばす
+    fn extend_v_up(&mut self, v_out: &mut [[i32; MAX_N - 1]; MAX_N]) {
+        for j in 0..MAX_N - 1 {
             for i in (0..MAX_N).rev() {
                 if self.v[i][j] || v_out[i][j] == 1 {
                     for r in (0..i).rev() {
@@ -184,10 +184,15 @@ impl Solver {
                 }
             }
         }
+    }
 
-        // 横方向: 各行境界 i について壁を左右に伸ばす
+    /// 横壁を右方向に伸ばす
+    fn extend_h_right(
+        &mut self,
+        h_out: &mut [[i32; MAX_N]; MAX_N - 1],
+        v_out: &[[i32; MAX_N - 1]; MAX_N],
+    ) {
         for i in 0..MAX_N - 1 {
-            // 右方向に伸ばす
             for j in 0..MAX_N {
                 if self.h[i][j] || h_out[i][j] == 1 {
                     for c in (j + 1)..MAX_N {
@@ -207,7 +212,16 @@ impl Solver {
                     }
                 }
             }
-            // 左方向に伸ばす
+        }
+    }
+
+    /// 横壁を左方向に伸ばす
+    fn extend_h_left(
+        &mut self,
+        h_out: &mut [[i32; MAX_N]; MAX_N - 1],
+        v_out: &[[i32; MAX_N - 1]; MAX_N],
+    ) {
+        for i in 0..MAX_N - 1 {
             for j in (0..MAX_N).rev() {
                 if self.h[i][j] || h_out[i][j] == 1 {
                     for c in (0..j).rev() {
@@ -227,11 +241,83 @@ impl Solver {
                 }
             }
         }
+    }
 
-        // 長方形化: 隣接セルの壁パターンが異なる場合に壁を追加（収束まで繰り返す）
-        self.rectify(&mut v_out, &mut h_out);
+    /// 壁延伸の1操作を適用する (0=V↓, 1=V↑, 2=H→, 3=H←)
+    fn apply_extend_op(
+        &mut self,
+        op: usize,
+        v_out: &mut [[i32; MAX_N - 1]; MAX_N],
+        h_out: &mut [[i32; MAX_N]; MAX_N - 1],
+    ) {
+        match op {
+            0 => self.extend_v_down(v_out),
+            1 => self.extend_v_up(v_out),
+            2 => self.extend_h_right(h_out, v_out),
+            3 => self.extend_h_left(h_out, v_out),
+            _ => unreachable!(),
+        }
+    }
 
-        (v_out, h_out)
+    /// 複数の壁延伸戦略を試し、領域数が最小となるものを選択する
+    fn extend_walls(&mut self) -> ([[i32; MAX_N - 1]; MAX_N], [[i32; MAX_N]; MAX_N - 1]) {
+        let orig_v = self.v;
+        let orig_h = self.h;
+
+        let mut best_v = self.v;
+        let mut best_h = self.h;
+        let mut best_v_out = [[0i32; MAX_N - 1]; MAX_N];
+        let mut best_h_out = [[0i32; MAX_N]; MAX_N - 1];
+        let mut best_regions = i32::MAX;
+
+        // 全24通りの延伸順列 + rectify-only を試す
+        // Operations: 0=V↓, 1=V↑, 2=H→, 3=H←
+        let mut strategies: Vec<Vec<usize>> = Vec::new();
+
+        // All 24 permutations of 4 operations
+        for a in 0..4usize {
+            for b in 0..4usize {
+                if b == a {
+                    continue;
+                }
+                for c in 0..4usize {
+                    if c == a || c == b {
+                        continue;
+                    }
+                    let d = 6 - a - b - c;
+                    strategies.push(vec![a, b, c, d]);
+                }
+            }
+        }
+
+        // Rectify-only (no extension)
+        strategies.push(vec![]);
+
+        for ops in &strategies {
+            self.v = orig_v;
+            self.h = orig_h;
+            let mut v_out = [[0i32; MAX_N - 1]; MAX_N];
+            let mut h_out = [[0i32; MAX_N]; MAX_N - 1];
+
+            for &op in ops {
+                self.apply_extend_op(op, &mut v_out, &mut h_out);
+            }
+
+            self.rectify(&mut v_out, &mut h_out);
+
+            let (_, num_regions) = self.build_area_map();
+            if num_regions < best_regions {
+                best_regions = num_regions;
+                best_v = self.v;
+                best_h = self.h;
+                best_v_out = v_out;
+                best_h_out = h_out;
+            }
+        }
+
+        self.v = best_v;
+        self.h = best_h;
+        (best_v_out, best_h_out)
     }
 
     /// 隣接セルの壁パターンの不整合を解消し、全領域を長方形にする
