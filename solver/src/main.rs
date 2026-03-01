@@ -179,6 +179,72 @@ impl Solver {
             }
         }
 
+        // 長方形化: 隣接セルの壁パターンが異なる場合に壁を追加
+        // 収束するまで繰り返す
+        loop {
+            let mut changed = false;
+
+            // 横方向チェック: (i,j) と (i,j+1) が壁なしで隣接している場合
+            // 上下の壁パターンが異なれば縦壁を追加
+            for i in 0..MAX_N {
+                for j in 0..MAX_N - 1 {
+                    if self.v[i][j] {
+                        continue; // 既に壁がある
+                    }
+                    let mut need_wall = false;
+                    // 上の壁チェック: h[i-1][j] vs h[i-1][j+1]
+                    if i > 0 {
+                        if self.h[i - 1][j] != self.h[i - 1][j + 1] {
+                            need_wall = true;
+                        }
+                    }
+                    // 下の壁チェック: h[i][j] vs h[i][j+1]
+                    if i < MAX_N - 1 {
+                        if self.h[i][j] != self.h[i][j + 1] {
+                            need_wall = true;
+                        }
+                    }
+                    if need_wall {
+                        self.v[i][j] = true;
+                        v_out[i][j] = 1;
+                        changed = true;
+                    }
+                }
+            }
+
+            // 縦方向チェック: (i,j) と (i+1,j) が壁なしで隣接している場合
+            // 左右の壁パターンが異なれば横壁を追加
+            for i in 0..MAX_N - 1 {
+                for j in 0..MAX_N {
+                    if self.h[i][j] {
+                        continue; // 既に壁がある
+                    }
+                    let mut need_wall = false;
+                    // 左の壁チェック: v[i][j-1] vs v[i+1][j-1]
+                    if j > 0 {
+                        if self.v[i][j - 1] != self.v[i + 1][j - 1] {
+                            need_wall = true;
+                        }
+                    }
+                    // 右の壁チェック: v[i][j] vs v[i+1][j]
+                    if j < MAX_N - 1 {
+                        if self.v[i][j] != self.v[i + 1][j] {
+                            need_wall = true;
+                        }
+                    }
+                    if need_wall {
+                        self.h[i][j] = true;
+                        h_out[i][j] = 1;
+                        changed = true;
+                    }
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
         let mut area_map = [[-1; MAX_N]; MAX_N];
         let mut rect_count = 0;
         let mut robot_pos: Vec<(usize, usize)> = Vec::new();
