@@ -4,7 +4,7 @@ use rand::prelude::*;
 use std::time::Instant;
 
 const N: usize = 20;
-const SA_TIME_LIMIT_MS: u128 = 1000; // SA time budget in ms
+const SA_TIME_LIMIT_MS: u128 = 800; // SA time budget in ms
 
 // Direction: 0=U, 1=R, 2=D, 3=L
 const DI: [i32; 4] = [-1, 0, 1, 0];
@@ -238,23 +238,31 @@ impl Solver {
             &REVERSE_SNAKE_AUTOMATON,
         ];
 
-        // Pre-compute coverage for all (automaton, position, direction) candidates
+        // Pre-compute coverage bitmasks for all (automaton, position, direction) candidates
         let mut cand_auto: Vec<usize> = Vec::new();
         let mut cand_r: Vec<usize> = Vec::new();
         let mut cand_c: Vec<usize> = Vec::new();
         let mut cand_d: Vec<usize> = Vec::new();
-        let mut cand_covered: Vec<Vec<Vec<bool>>> = Vec::new();
+        let mut cand_mask: Vec<[u32; N]> = Vec::new();
 
         for (ai, automaton) in automata.iter().enumerate() {
             for r in 0..n {
                 for c in 0..n {
                     for d in 0..4 {
                         let covered = self.simulate_automaton(automaton, r, c, d);
+                        let mut mask = [0u32; N];
+                        for i in 0..n {
+                            for j in 0..n {
+                                if covered[i][j] {
+                                    mask[i] |= 1 << j;
+                                }
+                            }
+                        }
                         cand_auto.push(ai);
                         cand_r.push(r);
                         cand_c.push(c);
                         cand_d.push(d);
-                        cand_covered.push(covered);
+                        cand_mask.push(mask);
                     }
                 }
             }
@@ -265,9 +273,9 @@ impl Solver {
         let no_cover = vec![vec![false; n]; n];
         let (vc_robots_pure, vc_cost_pure) = self.vertex_cover_for_uncovered(&no_cover);
 
-        // === Approach 2: Greedy multi-snake + VC (initial solution for SA) ===
+        // === Approach 2: Greedy multi-snake + exact VC ===
         let mut selected: Vec<usize> = Vec::new();
-        let mut combined = vec![vec![false; n]; n];
+        let mut combined_mask = [0u32; N];
         let mut snake_states: i64 = 0;
         let mut current_cost = vc_cost_pure;
 
@@ -276,30 +284,39 @@ impl Solver {
             let mut best_total: i64 = current_cost;
 
             for ci in 0..num_candidates {
-                let mut new_cells = 0usize;
+                // Fast new-cell count using bitmasks
+                let mut new_cells = 0u32;
                 for i in 0..n {
-                    for j in 0..n {
-                        if cand_covered[ci][i][j] && !combined[i][j] {
-                            new_cells += 1;
-                        }
-                    }
+                    new_cells += (cand_mask[ci][i] & !combined_mask[i]).count_ones();
                 }
                 if new_cells < 3 {
                     continue;
                 }
 
-                let auto_states = automata[cand_auto[ci]].len();
-                let mut merged = combined.clone();
+                let auto_states = automata[cand_auto[ci]].len() as i64;
+
+                // Quick approximate filter: skip if approx can't beat best
+                let mut merged_mask = combined_mask;
+                for i in 0..n {
+                    merged_mask[i] |= cand_mask[ci][i];
+                }
+                let approx_remain = self.fast_vc_estimate(&merged_mask);
+                let approx_total = snake_states + auto_states + approx_remain;
+                if approx_total > best_total {
+                    continue;
+                }
+
+                // Convert to Vec<Vec<bool>> for exact VC
+                let mut merged = vec![vec![false; n]; n];
                 for i in 0..n {
                     for j in 0..n {
-                        if cand_covered[ci][i][j] {
+                        if (merged_mask[i] >> j) & 1 == 1 {
                             merged[i][j] = true;
                         }
                     }
                 }
-
                 let (_, vc_remain) = self.vertex_cover_for_uncovered(&merged);
-                let total = snake_states + auto_states as i64 + vc_remain;
+                let total = snake_states + auto_states + vc_remain;
 
                 if total < best_total {
                     best_total = total;
@@ -311,11 +328,7 @@ impl Solver {
                 let auto_states = automata[cand_auto[ci]].len() as i64;
                 snake_states += auto_states;
                 for i in 0..n {
-                    for j in 0..n {
-                        if cand_covered[ci][i][j] {
-                            combined[i][j] = true;
-                        }
-                    }
+                    combined_mask[i] |= cand_mask[ci][i];
                 }
                 selected.push(ci);
                 current_cost = best_total;
@@ -324,31 +337,21 @@ impl Solver {
             }
         }
 
-        // Helper: compute cost from a selection of candidates
-        let compute_cost =
-            |sel: &[usize], automata: &[&[(u8, usize, u8, usize)]]| -> (Vec<Vec<bool>>, i64) {
-                let mut comb = vec![vec![false; n]; n];
-                let mut states: i64 = 0;
-                for &ci in sel {
-                    states += automata[cand_auto[ci]].len() as i64;
-                    for i in 0..n {
-                        for j in 0..n {
-                            if cand_covered[ci][i][j] {
-                                comb[i][j] = true;
-                            }
-                        }
-                    }
-                }
-                let (_, vc_cost) = self.vertex_cover_for_uncovered(&comb);
-                (comb, states + vc_cost)
-            };
+        // Compute initial approx cost for SA
+        let mut current_approx: i64 = {
+            let mut states: i64 = 0;
+            for &ci in &selected {
+                states += automata[cand_auto[ci]].len() as i64;
+            }
+            states + self.fast_vc_estimate(&combined_mask)
+        };
 
-        // === Simulated Annealing ===
+        // === Simulated Annealing with fast evaluation ===
         let sa_start = Instant::now();
         let mut rng = SmallRng::seed_from_u64(42);
         let mut best_selected = selected.clone();
-        let mut best_cost = current_cost;
-        let max_selected = 20usize; // cap on number of snakes
+        let mut best_approx = current_approx;
+        let max_selected = 20usize;
 
         let t_start: f64 = 5.0;
         let t_end: f64 = 0.1;
@@ -362,9 +365,8 @@ impl Solver {
             let progress = elapsed as f64 / SA_TIME_LIMIT_MS as f64;
             let temperature = t_start * (t_end / t_start).powf(progress);
 
-            // Choose a neighbor operation
             let op = if selected.is_empty() {
-                0 // must add
+                0
             } else {
                 rng.random_range(0..3)
             };
@@ -372,7 +374,6 @@ impl Solver {
             let mut new_selected = selected.clone();
             match op {
                 0 => {
-                    // Add a random candidate
                     if new_selected.len() >= max_selected {
                         iter_count += 1;
                         continue;
@@ -381,12 +382,10 @@ impl Solver {
                     new_selected.push(ci);
                 }
                 1 => {
-                    // Remove a random snake
                     let idx = rng.random_range(0..new_selected.len());
                     new_selected.remove(idx);
                 }
                 2 => {
-                    // Replace a random snake with a random candidate
                     let idx = rng.random_range(0..new_selected.len());
                     let ci = rng.random_range(0..num_candidates);
                     new_selected[idx] = ci;
@@ -394,9 +393,19 @@ impl Solver {
                 _ => unreachable!(),
             }
 
-            let (new_combined, new_cost) = compute_cost(&new_selected, &automata);
+            // Fast cost computation with bitmasks
+            let mut new_mask = [0u32; N];
+            let mut new_states: i64 = 0;
+            for &ci in &new_selected {
+                new_states += automata[cand_auto[ci]].len() as i64;
+                for i in 0..n {
+                    new_mask[i] |= cand_mask[ci][i];
+                }
+            }
+            let new_vc = self.fast_vc_estimate(&new_mask);
+            let new_approx = new_states + new_vc;
 
-            let delta = new_cost - current_cost;
+            let delta = new_approx - current_approx;
             let accept = if delta <= 0 {
                 true
             } else {
@@ -406,11 +415,11 @@ impl Solver {
 
             if accept {
                 selected = new_selected;
-                combined = new_combined;
-                current_cost = new_cost;
+                combined_mask = new_mask;
+                current_approx = new_approx;
 
-                if current_cost < best_cost {
-                    best_cost = current_cost;
+                if current_approx < best_approx {
+                    best_approx = current_approx;
                     best_selected = selected.clone();
                 }
             }
@@ -420,25 +429,37 @@ impl Solver {
 
         // Use the best found solution
         selected = best_selected;
-        current_cost = best_cost;
 
-        // Recompute combined for output
-        combined = vec![vec![false; n]; n];
+        // Recompute combined coverage for exact VC computation at output
+        combined_mask = [0u32; N];
         for &ci in &selected {
             for i in 0..n {
-                for j in 0..n {
-                    if cand_covered[ci][i][j] {
-                        combined[i][j] = true;
-                    }
+                combined_mask[i] |= cand_mask[ci][i];
+            }
+        }
+        let mut combined = vec![vec![false; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                if (combined_mask[i] >> j) & 1 == 1 {
+                    combined[i][j] = true;
                 }
             }
         }
 
-        eprintln!("SA iterations: {}, best cost: {}", iter_count, best_cost);
+        let (remain_robots, vc_cost_exact) = self.vertex_cover_for_uncovered(&combined);
+        let snake_states_total: i64 = selected
+            .iter()
+            .map(|&ci| automata[cand_auto[ci]].len() as i64)
+            .sum();
+        let current_cost = snake_states_total + vc_cost_exact;
 
-        // Compare pure VC vs greedy snake+VC and output the better one
+        eprintln!(
+            "SA iterations: {}, approx: {}, exact: {}",
+            iter_count, best_approx, current_cost
+        );
+
+        // Compare snake+VC vs pure VC and output the better one
         if current_cost < vc_cost_pure {
-            let (remain_robots, _) = self.vertex_cover_for_uncovered(&combined);
             let total_robots = selected.len() + remain_robots.len();
             println!("{}", total_robots);
 
@@ -618,6 +639,113 @@ impl Solver {
         }
 
         (robots, min_cost)
+    }
+
+    /// Fast VC cost estimate without max-flow. O(N^2) per call.
+    /// Computes min(row_seg_cost, col_seg_cost) for both broken and mega modes.
+    fn fast_vc_estimate(&self, combined_mask: &[u32; N]) -> i64 {
+        let a = self.fast_vc_one_mode(combined_mask, true);
+        let b = self.fast_vc_one_mode(combined_mask, false);
+        std::cmp::min(a, b)
+    }
+
+    /// Estimate VC cost for one segmentation mode.
+    /// break_at_covered=true: segments break at walls + covered cells
+    /// break_at_covered=false: segments break only at walls (mega-segments)
+    fn fast_vc_one_mode(&self, combined_mask: &[u32; N], break_at_covered: bool) -> i64 {
+        let n = self.n;
+        let full = (1u32 << n) - 1;
+
+        // Row segment costs
+        let mut row_cost: i64 = 0;
+        for i in 0..n {
+            let uncov = !combined_mask[i] & full;
+            if uncov == 0 {
+                continue;
+            }
+            let mut j = 0;
+            while j < n {
+                if break_at_covered && (uncov >> j) & 1 == 0 {
+                    j += 1;
+                    continue;
+                }
+                let start = j;
+                loop {
+                    j += 1;
+                    if j >= n {
+                        break;
+                    }
+                    if self.v[i][j - 1] {
+                        break;
+                    }
+                    if break_at_covered && (uncov >> j) & 1 == 0 {
+                        break;
+                    }
+                }
+                // Segment [start, j-1]
+                if !break_at_covered {
+                    let seg_mask = if j - start >= 32 {
+                        full
+                    } else {
+                        ((1u32 << (j - start)) - 1) << start
+                    };
+                    if uncov & seg_mask == 0 {
+                        continue;
+                    }
+                }
+                let seg_len = j - start;
+                row_cost += if seg_len == 1 { 1 } else { 2 };
+            }
+        }
+
+        // Column segment costs
+        let mut col_cost: i64 = 0;
+        for j in 0..n {
+            // Quick check: any uncovered cell in this column?
+            let mut any_uncov = false;
+            for i in 0..n {
+                if (combined_mask[i] >> j) & 1 == 0 {
+                    any_uncov = true;
+                    break;
+                }
+            }
+            if !any_uncov {
+                continue;
+            }
+            let mut i = 0;
+            while i < n {
+                let uncov_cell = (combined_mask[i] >> j) & 1 == 0;
+                if break_at_covered && !uncov_cell {
+                    i += 1;
+                    continue;
+                }
+                let start = i;
+                loop {
+                    i += 1;
+                    if i >= n {
+                        break;
+                    }
+                    if self.h[i - 1][j] {
+                        break;
+                    }
+                    let uc = (combined_mask[i] >> j) & 1 == 0;
+                    if break_at_covered && !uc {
+                        break;
+                    }
+                }
+                // Segment [start, i-1]
+                if !break_at_covered {
+                    let has_uncov = (start..i).any(|ii| (combined_mask[ii] >> j) & 1 == 0);
+                    if !has_uncov {
+                        continue;
+                    }
+                }
+                let seg_len = i - start;
+                col_cost += if seg_len == 1 { 1 } else { 2 };
+            }
+        }
+
+        std::cmp::min(row_cost, col_cost)
     }
 
     fn output_no_walls(&self) {
