@@ -738,6 +738,7 @@ impl Solver {
         let mut rng = SmallRng::seed_from_u64(42);
         let mut best: Option<Solution> = None;
         let mut best_cost = usize::MAX;
+        let mut best_tour: Option<Vec<(usize, usize)>> = None;
         let mut iters = 0u64;
 
         // Try snake automata (8 states each, massive improvement if they work)
@@ -776,17 +777,9 @@ impl Solver {
             for init_dir in 0..4 {
                 if let Some(sol) = self.build_solution(&tour, init_dir) {
                     if sol.states.len() < best_cost {
-                        eprintln!(
-                            "Sweep: states={} start=({},{}) sw={} st={} id={}",
-                            sol.states.len(),
-                            si,
-                            sj,
-                            sweep_dir,
-                            step_dir,
-                            init_dir
-                        );
                         best_cost = sol.states.len();
                         best = Some(sol);
+                        best_tour = Some(tour.clone());
                     }
                 }
             }
@@ -800,32 +793,126 @@ impl Solver {
                 if sol.states.len() < best_cost {
                     best_cost = sol.states.len();
                     best = Some(sol);
+                    best_tour = Some(tour);
                 }
             }
             iters += 1;
         }
 
-        // Randomized search
-        while t0.elapsed().as_millis() < TIME_LIMIT_MS {
+        // Phase 1: Randomized search (first 1.0s)
+        let phase1_limit = 1000u128;
+        let sweep_dirs: [(usize, usize); 4] = [(1, 2), (3, 2), (2, 1), (0, 1)];
+        while t0.elapsed().as_millis() < phase1_limit {
             let si = rng.random_range(0..N);
             let sj = rng.random_range(0..N);
-            let tour = self.dfs_euler_tour_from(si, sj, &mut rng, true);
-            if tour.len() < 2 {
-                continue;
+
+            // Random sweep
+            let &(sw, st) = sweep_dirs.choose(&mut rng).unwrap();
+            let tour_sw = self.snake_sweep_tour(si, sj, sw, st);
+            if tour_sw.len() >= 2 {
+                for init_dir in 0..4 {
+                    if let Some(sol) = self.build_solution(&tour_sw, init_dir) {
+                        if sol.states.len() < best_cost {
+                            best_cost = sol.states.len();
+                            best = Some(sol);
+                            best_tour = Some(tour_sw.clone());
+                        }
+                    }
+                }
             }
 
-            for init_dir in 0..4 {
-                if let Some(sol) = self.build_solution(&tour, init_dir) {
-                    if sol.states.len() < best_cost {
-                        best_cost = sol.states.len();
-                        best = Some(sol);
+            // Random DFS
+            let tour = self.dfs_euler_tour_from(si, sj, &mut rng, true);
+            if tour.len() >= 2 {
+                for init_dir in 0..4 {
+                    if let Some(sol) = self.build_solution(&tour, init_dir) {
+                        if sol.states.len() < best_cost {
+                            best_cost = sol.states.len();
+                            best = Some(sol);
+                            best_tour = Some(tour.clone());
+                        }
                     }
                 }
             }
             iters += 1;
         }
 
-        eprintln!("Iterations: {}, Best states: {}", iters, best_cost);
+        eprintln!("Phase1: iters={}, best_states={}", iters, best_cost);
+
+        // Phase 2: Hill climbing - shorten the best tour (remaining time)
+        if let Some(ref base_tour) = best_tour {
+            let mut cur_tour = base_tour.clone();
+            let mut hc_iters = 0u64;
+            let mut hc_improved = 0u64;
+
+            while t0.elapsed().as_millis() < TIME_LIMIT_MS {
+                let n = cur_tour.len();
+                if n < 5 {
+                    break;
+                }
+
+                // Pick random segment [i..j]
+                let i = rng.random_range(0..n - 3);
+                let j_max = (n - 1).min(i + 60);
+                if i + 3 > j_max {
+                    hc_iters += 1;
+                    continue;
+                }
+                let j = rng.random_range((i + 3)..=j_max);
+
+                // BFS shortest path from cur_tour[i] to cur_tour[j]
+                let (si, sj) = cur_tour[i];
+                let (ti, tj) = cur_tour[j];
+                let path = self.bfs_path(si, sj, ti, tj);
+                if path.is_empty() || path.len() >= j - i + 1 {
+                    hc_iters += 1;
+                    continue;
+                }
+
+                // Construct shortened tour
+                let mut new_tour = Vec::with_capacity(n);
+                new_tour.extend_from_slice(&cur_tour[..i]);
+                new_tour.extend_from_slice(&path);
+                new_tour.extend_from_slice(&cur_tour[j + 1..]);
+
+                // Check all N*N cells still covered
+                let mut covered = [[false; N]; N];
+                for &(r, c) in &new_tour {
+                    covered[r][c] = true;
+                }
+                if !(0..N).all(|r| (0..N).all(|c| covered[r][c])) {
+                    hc_iters += 1;
+                    continue;
+                }
+
+                // Evaluate: try all 4 init directions
+                let mut found_better = false;
+                for d in 0..4 {
+                    if let Some(sol) = self.build_solution(&new_tour, d) {
+                        if sol.states.len() < best_cost {
+                            best_cost = sol.states.len();
+                            best = Some(sol);
+                            found_better = true;
+                        }
+                    }
+                }
+
+                // Accept shorter tour (even if states didn't improve, opens future shortcuts)
+                if found_better || new_tour.len() < cur_tour.len() {
+                    cur_tour = new_tour;
+                    hc_improved += 1;
+                }
+
+                hc_iters += 1;
+            }
+            eprintln!(
+                "HC: iters={}, improved={}, tour_len={}, best_states={}",
+                hc_iters,
+                hc_improved,
+                cur_tour.len(),
+                best_cost
+            );
+        }
 
         match best {
             Some(sol) => self.output(&sol),
