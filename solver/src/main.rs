@@ -40,12 +40,21 @@ const AUTO_3S_A: [(u8, usize, u8, usize); 3] = [(1, 1, 2, 2), (2, 2, 2, 1), (0, 
 /// Mirror of 3S_A
 const AUTO_3S_B: [(u8, usize, u8, usize); 3] = [(2, 1, 1, 2), (1, 2, 1, 1), (0, 0, 2, 2)];
 
+/// 5-state generic corridor automaton
+const CORRIDOR_AUTOMATON: [(u8, usize, u8, usize); 5] = [
+    (0, 0, 1, 1),
+    (0, 0, 2, 2),
+    (0, 0, 2, 3),
+    (0, 0, 2, 4),
+    (0, 0, 2, 0),
+];
+
 /// All automaton definitions: (table slice, num_states)
 struct AutomatonDef {
     table: &'static [(u8, usize, u8, usize)],
 }
 
-const AUTOMATA: [AutomatonDef; 8] = [
+const AUTOMATA: [AutomatonDef; 9] = [
     AutomatonDef {
         table: &SNAKE_AUTOMATON,
     },
@@ -58,6 +67,9 @@ const AUTOMATA: [AutomatonDef; 8] = [
     AutomatonDef { table: &AUTO_2S_D },
     AutomatonDef { table: &AUTO_3S_A },
     AutomatonDef { table: &AUTO_3S_B },
+    AutomatonDef {
+        table: &CORRIDOR_AUTOMATON,
+    },
 ];
 
 struct Solver {
@@ -439,6 +451,325 @@ impl Solver {
             }
             auto_state = next_state;
         }
+    }
+
+    fn cell_idx(row: usize, col: usize) -> usize {
+        row * MAX_N + col
+    }
+
+    fn idx_cell(idx: usize) -> (usize, usize) {
+        (idx / MAX_N, idx % MAX_N)
+    }
+
+    fn open_neighbors(&self, row: usize, col: usize) -> Vec<usize> {
+        let mut res = Vec::with_capacity(4);
+        if row > 0 && !self.h[row - 1][col] {
+            res.push(Self::cell_idx(row - 1, col));
+        }
+        if col + 1 < MAX_N && !self.v[row][col] {
+            res.push(Self::cell_idx(row, col + 1));
+        }
+        if row + 1 < MAX_N && !self.h[row][col] {
+            res.push(Self::cell_idx(row + 1, col));
+        }
+        if col > 0 && !self.v[row][col - 1] {
+            res.push(Self::cell_idx(row, col - 1));
+        }
+        res
+    }
+
+    fn build_open_graph(&self) -> Vec<Vec<usize>> {
+        let mut adj = vec![Vec::new(); MAX_N * MAX_N];
+        for row in 0..MAX_N {
+            for col in 0..MAX_N {
+                adj[Self::cell_idx(row, col)] = self.open_neighbors(row, col);
+            }
+        }
+        adj
+    }
+
+    fn xorshift64(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 7;
+        *seed ^= *seed >> 9;
+        *seed
+    }
+
+    fn shuffle_vec(v: &mut [usize], seed: &mut u64) {
+        for i in (1..v.len()).rev() {
+            let r = (Self::xorshift64(seed) as usize) % (i + 1);
+            v.swap(i, r);
+        }
+    }
+
+    fn prune_unvisited_connected(
+        &self,
+        adj: &Vec<Vec<usize>>,
+        visited: &[bool; MAX_N * MAX_N],
+        visited_count: usize,
+    ) -> bool {
+        let rem = MAX_N * MAX_N - visited_count;
+        if rem == 0 {
+            return true;
+        }
+
+        let mut start = None;
+        for i in 0..(MAX_N * MAX_N) {
+            if !visited[i] {
+                start = Some(i);
+                break;
+            }
+        }
+        let Some(start_idx) = start else {
+            return true;
+        };
+
+        let mut q = std::collections::VecDeque::new();
+        let mut seen = [false; MAX_N * MAX_N];
+        seen[start_idx] = true;
+        q.push_back(start_idx);
+        let mut count = 1usize;
+
+        while let Some(u) = q.pop_front() {
+            for &v in &adj[u] {
+                if !visited[v] && !seen[v] {
+                    seen[v] = true;
+                    q.push_back(v);
+                    count += 1;
+                }
+            }
+        }
+
+        if count != rem {
+            return false;
+        }
+
+        if rem > 1 {
+            for u in 0..(MAX_N * MAX_N) {
+                if visited[u] {
+                    continue;
+                }
+                let mut deg = 0usize;
+                for &v in &adj[u] {
+                    if !visited[v] {
+                        deg += 1;
+                    }
+                }
+                if deg == 0 {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    fn dfs_hamilton(
+        &self,
+        adj: &Vec<Vec<usize>>,
+        current: usize,
+        visited: &mut [bool; MAX_N * MAX_N],
+        path: &mut Vec<usize>,
+        visited_count: usize,
+        seed: &mut u64,
+        start_time: std::time::Instant,
+        limit: std::time::Duration,
+    ) -> bool {
+        if visited_count == MAX_N * MAX_N {
+            return true;
+        }
+        if start_time.elapsed() > limit {
+            return false;
+        }
+
+        let mut candidates: Vec<usize> = adj[current]
+            .iter()
+            .copied()
+            .filter(|&nxt| !visited[nxt])
+            .collect();
+        if candidates.is_empty() {
+            return false;
+        }
+
+        Self::shuffle_vec(&mut candidates, seed);
+        candidates.sort_by_key(|&nxt| {
+            adj[nxt]
+                .iter()
+                .filter(|&&to| !visited[to] && to != current)
+                .count()
+        });
+
+        for nxt in candidates {
+            visited[nxt] = true;
+            path.push(nxt);
+
+            if self.prune_unvisited_connected(adj, visited, visited_count + 1)
+                && self.dfs_hamilton(
+                    adj,
+                    nxt,
+                    visited,
+                    path,
+                    visited_count + 1,
+                    seed,
+                    start_time,
+                    limit,
+                )
+            {
+                return true;
+            }
+
+            path.pop();
+            visited[nxt] = false;
+        }
+
+        false
+    }
+
+    fn find_hamilton_path(&self) -> Option<Vec<(usize, usize)>> {
+        let adj = self.build_open_graph();
+        let mut starts: Vec<usize> = (0..MAX_N * MAX_N).collect();
+        starts.sort_by_key(|&u| adj[u].len());
+
+        let start_time = std::time::Instant::now();
+        let total_limit = std::time::Duration::from_millis(350);
+
+        for (rank, &s) in starts.iter().enumerate() {
+            if adj[s].is_empty() {
+                continue;
+            }
+            if start_time.elapsed() > total_limit {
+                break;
+            }
+
+            let mut seed = 0x9E3779B97F4A7C15u64
+                ^ ((s as u64) << 32)
+                ^ (rank as u64)
+                ^ (self.a_k as u64)
+                ^ ((self.a_m as u64) << 16)
+                ^ ((self.a_w as u64) << 40);
+
+            let mut visited = [false; MAX_N * MAX_N];
+            visited[s] = true;
+            let mut path = vec![s];
+
+            if self.dfs_hamilton(
+                &adj,
+                s,
+                &mut visited,
+                &mut path,
+                1,
+                &mut seed,
+                start_time,
+                total_limit,
+            ) {
+                let route = path.into_iter().map(Self::idx_cell).collect::<Vec<_>>();
+                return Some(route);
+            }
+        }
+
+        None
+    }
+
+    fn build_walls_for_route(
+        &self,
+        route: &[(usize, usize)],
+    ) -> ([[i32; MAX_N - 1]; MAX_N], [[i32; MAX_N]; MAX_N - 1]) {
+        let mut keep_v = [[false; MAX_N - 1]; MAX_N];
+        let mut keep_h = [[false; MAX_N]; MAX_N - 1];
+
+        for w in route.windows(2) {
+            let (r1, c1) = w[0];
+            let (r2, c2) = w[1];
+            if r1 == r2 {
+                let j = c1.min(c2);
+                keep_v[r1][j] = true;
+            } else {
+                let i = r1.min(r2);
+                keep_h[i][c1] = true;
+            }
+        }
+
+        let mut v_out = [[0i32; MAX_N - 1]; MAX_N];
+        let mut h_out = [[0i32; MAX_N]; MAX_N - 1];
+
+        for i in 0..MAX_N {
+            for j in 0..MAX_N - 1 {
+                if !keep_v[i][j] && !self.v[i][j] {
+                    v_out[i][j] = 1;
+                }
+            }
+        }
+        for i in 0..MAX_N - 1 {
+            for j in 0..MAX_N {
+                if !keep_h[i][j] && !self.h[i][j] {
+                    h_out[i][j] = 1;
+                }
+            }
+        }
+
+        (v_out, h_out)
+    }
+
+    fn route_initial_dir(route: &[(usize, usize)]) -> usize {
+        if route.len() < 2 {
+            return 1;
+        }
+        let (r0, c0) = route[0];
+        let (r1, c1) = route[1];
+        if r1 + 1 == r0 {
+            0
+        } else if c1 == c0 + 1 {
+            1
+        } else if r1 == r0 + 1 {
+            2
+        } else {
+            3
+        }
+    }
+
+    fn try_single_robot_route(
+        &self,
+    ) -> Option<(
+        Vec<((usize, usize), usize, usize)>,
+        [[i32; MAX_N - 1]; MAX_N],
+        [[i32; MAX_N]; MAX_N - 1],
+    )> {
+        let route = self.find_hamilton_path()?;
+        let (v_out, h_out) = self.build_walls_for_route(&route);
+
+        let start = route[0];
+        let dir = Self::route_initial_dir(&route);
+        let corridor_idx = AUTOMATA.len() - 1;
+
+        let mut test_solver = Solver {
+            n: self.n,
+            a_k: self.a_k,
+            a_m: self.a_m,
+            a_w: self.a_w,
+            v: self.v,
+            h: self.h,
+        };
+        for i in 0..MAX_N {
+            for j in 0..MAX_N - 1 {
+                if v_out[i][j] == 1 {
+                    test_solver.v[i][j] = true;
+                }
+            }
+        }
+        for i in 0..MAX_N - 1 {
+            for j in 0..MAX_N {
+                if h_out[i][j] == 1 {
+                    test_solver.h[i][j] = true;
+                }
+            }
+        }
+
+        let reachable = test_solver.simulate_reachable_with(start, dir, AUTOMATA[corridor_idx].table);
+        if !reachable.iter().all(|row| row.iter().all(|&x| x)) {
+            return None;
+        }
+
+        let configs = vec![(start, dir, corridor_idx)];
+        Some((configs, v_out, h_out))
     }
 
     /// 現在の壁状態でエリアマップを構築する（0-indexed）
@@ -829,7 +1160,42 @@ impl Solver {
         }
     }
 
-    fn solve(&mut self) {
+    fn solution_cost(
+        &self,
+        configs: &[((usize, usize), usize, usize)],
+        v_out: &[[i32; MAX_N - 1]; MAX_N],
+        h_out: &[[i32; MAX_N]; MAX_N - 1],
+    ) -> i64 {
+        let k = configs.len() as i64;
+        let m = configs
+            .iter()
+            .map(|&(_, _, auto_idx)| AUTOMATA[auto_idx].table.len() as i64)
+            .sum::<i64>();
+        let mut w = 0i64;
+        for i in 0..MAX_N {
+            for j in 0..MAX_N - 1 {
+                if v_out[i][j] == 1 {
+                    w += 1;
+                }
+            }
+        }
+        for i in 0..MAX_N - 1 {
+            for j in 0..MAX_N {
+                if h_out[i][j] == 1 {
+                    w += 1;
+                }
+            }
+        }
+        self.a_k * (k - 1) + self.a_m * m + self.a_w * w
+    }
+
+    fn solve_multi_robot(
+        &mut self,
+    ) -> (
+        Vec<((usize, usize), usize, usize)>,
+        [[i32; MAX_N - 1]; MAX_N],
+        [[i32; MAX_N]; MAX_N - 1],
+    ) {
         let (mut v_out, mut h_out) = self.extend_walls();
         loop {
             self.try_merge_regions(&mut v_out, &mut h_out);
@@ -838,7 +1204,24 @@ impl Solver {
             }
         }
         let configs = self.find_robot_configs();
-        self.output(&configs, &v_out, &h_out);
+        (configs, v_out, h_out)
+    }
+
+    fn solve(&mut self) {
+        let single = self.try_single_robot_route();
+        let multi = self.solve_multi_robot();
+
+        if let Some((s_cfg, s_v, s_h)) = single {
+            let single_cost = self.solution_cost(&s_cfg, &s_v, &s_h);
+            let multi_cost = self.solution_cost(&multi.0, &multi.1, &multi.2);
+            if single_cost <= multi_cost {
+                self.output(&s_cfg, &s_v, &s_h);
+            } else {
+                self.output(&multi.0, &multi.1, &multi.2);
+            }
+        } else {
+            self.output(&multi.0, &multi.1, &multi.2);
+        }
     }
 }
 
