@@ -6,6 +6,13 @@ const N: usize = 20;
 const DI: [i32; 4] = [-1, 0, 1, 0];
 const DJ: [i32; 4] = [0, 1, 0, -1];
 
+#[derive(Debug, Clone)]
+enum CompressedState {
+    SingleF,                  // A single F where front is not wall
+    Turn(char),               // L or R turn
+    RunF { wall_turn: char }, // "no wall → F(self), wall → turn(next)"
+}
+
 struct Solver {
     _n: usize,
     _a_k: i64,
@@ -138,6 +145,51 @@ impl Solver {
         }
     }
 
+    /// Compress action sequence: merge consecutive F-runs ending at a wall into single states.
+    /// A run of F's followed by a turn (L/R) where front_is_wall=true can be compressed:
+    ///   F, F, ..., F, Turn(wall=true) → RunF{wall_turn}, then continue after the turn
+    fn compress_actions(actions: &[(char, bool)]) -> Vec<CompressedState> {
+        let mut result = Vec::new();
+        let n = actions.len();
+        let mut i = 0;
+
+        while i < n {
+            if actions[i].0 == 'F' {
+                // Count consecutive F's
+                let f_start = i;
+                while i < n && actions[i].0 == 'F' {
+                    i += 1;
+                }
+                let f_count = i - f_start;
+
+                // Check if this F-run is followed by a turn with front_is_wall=true
+                if i < n && actions[i].0 != 'F' && actions[i].1 {
+                    // Can compress: all F's + the turn → one RunF state
+                    let turn_char = actions[i].0;
+                    result.push(CompressedState::RunF {
+                        wall_turn: turn_char,
+                    });
+                    i += 1; // consume the turn
+                } else {
+                    // Cannot compress: emit F's individually
+                    for _ in 0..f_count {
+                        result.push(CompressedState::SingleF);
+                    }
+                }
+            } else {
+                // Turn action (L or R)
+                result.push(CompressedState::Turn(actions[i].0));
+                i += 1;
+            }
+        }
+
+        // Handle wrap-around: if the sequence starts with F's and ends with F's,
+        // check if the first action's run can merge with the last F run
+        // (This is complex; for now, leave as-is since the loop closing turn handles it)
+
+        result
+    }
+
     fn solve(&mut self) {
         // 1. Build Euler tour of DFS spanning tree
         let tour = self.dfs_euler_tour();
@@ -173,9 +225,13 @@ impl Solver {
             cur_dir = Self::apply_turn(cur_dir, t);
         }
 
-        let m = actions.len();
+        // 3. Compress consecutive F-runs that end at a wall into single states
+        //    Pattern: F, F, ..., F, (L or R with front_wall=true)
+        //    Compressed: one state "no wall → F(self), wall → turn(next)"
+        let compressed = Self::compress_actions(&actions);
+        let m = compressed.len();
 
-        // 3. Fallback if state count exceeds limit (4*N*N = 1600)
+        // 4. Fallback if state count exceeds limit (4*N*N = 1600)
         if m > 4 * N * N {
             eprintln!(
                 "Warning: state count {} exceeds limit, using naive fallback",
@@ -185,7 +241,7 @@ impl Solver {
             return;
         }
 
-        // 4. Output
+        // 5. Output
         println!("1"); // K = 1 robot
         println!(
             "{} {} {} {}",
@@ -195,21 +251,25 @@ impl Solver {
             Self::dir_char(init_dir)
         );
 
-        for (idx, &(action, _front_wall)) in actions.iter().enumerate() {
+        for (idx, state) in compressed.iter().enumerate() {
             let next_state = (idx + 1) % m;
-            match action {
-                'F' => {
-                    // Front is NOT wall → action F; front IS wall (impossible) → dummy R
+            match state {
+                CompressedState::SingleF => {
+                    // F when no wall (expected), dummy R when wall (impossible)
                     println!("F {} R {}", next_state, next_state);
                 }
-                c => {
-                    // L or R: valid regardless of wall status
+                CompressedState::Turn(c) => {
+                    // L or R: valid regardless of wall
                     println!("{} {} {} {}", c, next_state, c, next_state);
+                }
+                CompressedState::RunF { wall_turn } => {
+                    // No wall → F (stay in this state), wall → turn (go to next state)
+                    println!("F {} {} {}", idx, wall_turn, next_state);
                 }
             }
         }
 
-        // 5. No new walls
+        // 6. No new walls
         for _ in 0..N {
             println!("{}", "0".repeat(N - 1));
         }
@@ -217,7 +277,12 @@ impl Solver {
             println!("{}", "0".repeat(N));
         }
 
-        eprintln!("States: {}, Cost: {}", m, m);
+        eprintln!(
+            "States: {} (before compress: {}), Cost: {}",
+            m,
+            actions.len(),
+            m
+        );
     }
 
     fn solve_naive(&mut self) {
