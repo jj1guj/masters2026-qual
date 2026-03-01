@@ -3,6 +3,29 @@ use proconio::input;
 
 const N: usize = 20;
 
+// Direction: 0=U, 1=R, 2=D, 3=L
+const DI: [i32; 4] = [-1, 0, 1, 0];
+const DJ: [i32; 4] = [0, 1, 0, -1];
+
+fn turn_right(d: usize) -> usize {
+    (d + 1) % 4
+}
+fn turn_left(d: usize) -> usize {
+    (d + 3) % 4
+}
+
+/// 6-state snake automaton definition
+/// Each state: (action_no_wall, next_no_wall, action_wall, next_wall)
+/// action: 0=F, 1=R, 2=L
+const SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
+    (0, 0, 1, 1), // state 0: F→0, R→1
+    (0, 2, 1, 2), // state 1: F→2, R→2
+    (1, 3, 1, 3), // state 2: R→3, R→3
+    (0, 3, 2, 4), // state 3: F→3, L→4
+    (0, 5, 2, 5), // state 4: F→5, L→5
+    (2, 0, 2, 0), // state 5: L→0, L→0
+];
+
 struct Solver {
     n: usize,
     a_k: i64,
@@ -44,17 +67,201 @@ impl Solver {
         }
     }
 
+    /// Check if there's a wall in front of (r,c) facing direction d
+    fn has_wall_ahead(&self, r: usize, c: usize, d: usize) -> bool {
+        let n = self.n;
+        match d {
+            0 => r == 0 || self.h[r - 1][c], // U: wall between (r-1,c) and (r,c)
+            1 => c == n - 1 || self.v[r][c], // R: wall between (r,c) and (r,c+1)
+            2 => r == n - 1 || self.h[r][c], // D: wall between (r,c) and (r+1,c)
+            3 => c == 0 || self.v[r][c - 1], // L: wall between (r,c-1) and (r,c)
+            _ => unreachable!(),
+        }
+    }
+
+    /// Simulate a given automaton and return the set of cells in the periodic cycle.
+    /// automaton: slice of (action_no_wall, next_no_wall, action_wall, next_wall)
+    /// Returns: covered cells as a bitmask (N*N bits for convenience, use Vec<bool>)
+    fn simulate_automaton(
+        &self,
+        automaton: &[(u8, usize, u8, usize)],
+        start_r: usize,
+        start_c: usize,
+        start_d: usize,
+    ) -> Vec<Vec<bool>> {
+        let n = self.n;
+        let m = automaton.len();
+        // State space: (r, c, d, s) → N * N * 4 * m
+        let state_size = n * n * 4 * m;
+        let encode =
+            |r: usize, c: usize, d: usize, s: usize| -> usize { ((r * n + c) * 4 + d) * m + s };
+
+        let mut visited = vec![false; state_size];
+        let mut step_of = vec![0u32; state_size]; // step when first visited
+        let mut trajectory: Vec<(usize, usize)> = Vec::new(); // (r, c) at each step
+
+        let mut r = start_r;
+        let mut c = start_c;
+        let mut d = start_d;
+        let mut s = 0usize;
+        let mut step = 0u32;
+
+        loop {
+            let sid = encode(r, c, d, s);
+            if visited[sid] {
+                // Found cycle: periodic part is from step_of[sid] to step-1
+                let cycle_start = step_of[sid] as usize;
+                let mut covered = vec![vec![false; n]; n];
+                for &(cr, cc) in &trajectory[cycle_start..] {
+                    covered[cr][cc] = true;
+                }
+                return covered;
+            }
+            visited[sid] = true;
+            step_of[sid] = step;
+            trajectory.push((r, c));
+
+            // Determine action
+            let wall = self.has_wall_ahead(r, c, d);
+            let (action, next_s) = if wall {
+                (automaton[s].2, automaton[s].3)
+            } else {
+                (automaton[s].0, automaton[s].1)
+            };
+
+            // Execute action
+            match action {
+                0 => {
+                    // Forward
+                    let nr = (r as i32 + DI[d]) as usize;
+                    let nc = (c as i32 + DJ[d]) as usize;
+                    r = nr;
+                    c = nc;
+                }
+                1 => {
+                    // Right turn (no movement)
+                    d = turn_right(d);
+                }
+                2 => {
+                    // Left turn (no movement)
+                    d = turn_left(d);
+                }
+                _ => unreachable!(),
+            }
+            s = next_s;
+            step += 1;
+
+            if step as usize > state_size {
+                // Should not happen, but safety
+                break;
+            }
+        }
+        vec![vec![false; n]; n]
+    }
+
+    /// Try the snake automaton at all starting positions & directions,
+    /// find the one that covers the most cells in its periodic cycle.
+    fn best_snake_coverage(&self) -> (usize, usize, usize, Vec<Vec<bool>>) {
+        let n = self.n;
+        let dirs = [0, 1, 2, 3]; // U, R, D, L
+        let mut best_count = 0;
+        let mut best_r = 0;
+        let mut best_c = 0;
+        let mut best_d = 0;
+        let mut best_covered = vec![vec![false; n]; n];
+
+        for r in 0..n {
+            for c in 0..n {
+                for &d in &dirs {
+                    let covered = self.simulate_automaton(&SNAKE_AUTOMATON, r, c, d);
+                    let count: usize = covered
+                        .iter()
+                        .map(|row| row.iter().filter(|&&x| x).count())
+                        .sum();
+                    if count > best_count {
+                        best_count = count;
+                        best_r = r;
+                        best_c = c;
+                        best_d = d;
+                        best_covered = covered;
+                    }
+                }
+            }
+        }
+        (best_r, best_c, best_d, best_covered)
+    }
+
+    fn dir_char(d: usize) -> char {
+        match d {
+            0 => 'U',
+            1 => 'R',
+            2 => 'D',
+            3 => 'L',
+            _ => unreachable!(),
+        }
+    }
+
     fn solve(&self) {
         let n = self.n;
 
-        // Compute row segments: (row, start_col, end_col) inclusive
+        // === Approach 1: Vertex cover on all cells ===
+        let uncovered_all = vec![vec![false; n]; n]; // no pre-covered cells
+        let (vc_robots, vc_cost) = self.vertex_cover_for_uncovered(&uncovered_all);
+
+        // === Approach 2: Snake automaton + vertex cover on remaining ===
+        let (sr, sc, sd, snake_covered) = self.best_snake_coverage();
+        let (remain_robots, remain_cost) = self.vertex_cover_for_uncovered(&snake_covered);
+        let snake_total_cost = 6i64 + remain_cost;
+
+        if snake_total_cost < vc_cost {
+            // Output snake + VC for uncovered
+            let num_robots = 1 + remain_robots.len();
+            println!("{}", num_robots);
+
+            // Snake robot
+            println!("6 {} {} {}", sr, sc, Self::dir_char(sd));
+            println!("F 0 R 1");
+            println!("F 2 R 2");
+            println!("R 3 R 3");
+            println!("F 3 L 4");
+            println!("F 5 L 5");
+            println!("L 0 L 0");
+
+            // VC robots for remaining
+            for robot in &remain_robots {
+                print!("{}", robot);
+            }
+        } else {
+            // Output pure VC
+            println!("{}", vc_robots.len());
+            for robot in &vc_robots {
+                print!("{}", robot);
+            }
+        }
+
+        self.output_no_walls();
+    }
+
+    /// Compute vertex cover for cells NOT already covered.
+    /// `pre_covered[i][j]` = true means cell (i,j) is already covered (skip it).
+    /// Returns: (robot output strings, total state cost)
+    fn vertex_cover_for_uncovered(&self, pre_covered: &[Vec<bool>]) -> (Vec<String>, i64) {
+        let n = self.n;
+
+        // Build row segments restricted to uncovered cells
         let mut row_segs: Vec<(usize, usize, usize)> = Vec::new();
-        let mut row_seg_id = vec![vec![0usize; n]; n];
+        let mut row_seg_id = vec![vec![usize::MAX; n]; n];
         for i in 0..n {
             let mut j = 0;
             while j < n {
+                // Skip covered cells
+                if pre_covered[i][j] {
+                    j += 1;
+                    continue;
+                }
                 let start = j;
-                while j < n - 1 && !self.v[i][j] {
+                // Extend segment: stop at wall OR covered cell
+                while j < n - 1 && !self.v[i][j] && !pre_covered[i][j + 1] {
                     j += 1;
                 }
                 let idx = row_segs.len();
@@ -66,14 +273,18 @@ impl Solver {
             }
         }
 
-        // Compute column segments: (col, start_row, end_row) inclusive
+        // Build column segments restricted to uncovered cells
         let mut col_segs: Vec<(usize, usize, usize)> = Vec::new();
-        let mut col_seg_id = vec![vec![0usize; n]; n];
+        let mut col_seg_id = vec![vec![usize::MAX; n]; n];
         for j in 0..n {
             let mut i = 0;
             while i < n {
+                if pre_covered[i][j] {
+                    i += 1;
+                    continue;
+                }
                 let start = i;
-                while i < n - 1 && !self.h[i][j] {
+                while i < n - 1 && !self.h[i][j] && !pre_covered[i + 1][j] {
                     i += 1;
                 }
                 let idx = col_segs.len();
@@ -87,9 +298,12 @@ impl Solver {
 
         let p = row_segs.len();
         let q = col_segs.len();
+        if p == 0 && q == 0 {
+            return (vec![], 0);
+        }
+
         let seg_cost = |s: usize, e: usize| -> i64 { if s == e { 1 } else { 2 } };
 
-        // --- Minimum weight vertex cover via max-flow ---
         let source = 0;
         let sink = 1;
         let total_nodes = 2 + p + q;
@@ -103,18 +317,23 @@ impl Solver {
             let (_, s, e) = col_segs[j];
             graph.add_edge(2 + p + j, sink, seg_cost(s, e));
         }
+        // Add edges only for uncovered cells
         for i in 0..n {
             for j in 0..n {
+                if pre_covered[i][j] {
+                    continue;
+                }
                 let r = row_seg_id[i][j];
                 let c = col_seg_id[i][j];
-                graph.add_edge(2 + r, 2 + p + c, i64::MAX / 2);
+                if r != usize::MAX && c != usize::MAX {
+                    graph.add_edge(2 + r, 2 + p + c, i64::MAX / 2);
+                }
             }
         }
 
-        let _min_cost = graph.flow(source, sink);
+        let min_cost = graph.flow(source, sink);
         let reachable = graph.min_cut(source);
 
-        // Vertex cover: left (row) NOT reachable, right (col) reachable
         let mut selected_row = vec![false; p];
         let mut selected_col = vec![false; q];
         for i in 0..p {
@@ -124,44 +343,37 @@ impl Solver {
             selected_col[j] = reachable[2 + p + j];
         }
 
-        // Output robots
-        let num_robots: usize = selected_row.iter().filter(|&&x| x).count()
-            + selected_col.iter().filter(|&&x| x).count();
-        println!("{}", num_robots);
+        let mut robots = Vec::new();
 
-        // Row robots: 2-state U-turn (F 0 R 1 / R 0 R 0), start facing R
         for i in 0..p {
             if !selected_row[i] {
                 continue;
             }
             let (row, sc, ec) = row_segs[i];
             if sc == ec {
-                println!("1 {} {} R", row, sc);
-                println!("R 0 R 0");
+                robots.push(format!("1 {} {} R\nR 0 R 0\n", row, sc));
             } else {
-                println!("2 {} {} R", row, sc);
-                println!("F 0 R 1");
-                println!("R 0 R 0");
+                robots.push(format!("2 {} {} R\nF 0 R 1\nR 0 R 0\n", row, sc));
             }
         }
 
-        // Column robots: 2-state U-turn, start facing D
         for j in 0..q {
             if !selected_col[j] {
                 continue;
             }
             let (col, sr, er) = col_segs[j];
             if sr == er {
-                println!("1 {} {} D", sr, col);
-                println!("R 0 R 0");
+                robots.push(format!("1 {} {} D\nR 0 R 0\n", sr, col));
             } else {
-                println!("2 {} {} D", sr, col);
-                println!("F 0 R 1");
-                println!("R 0 R 0");
+                robots.push(format!("2 {} {} D\nF 0 R 1\nR 0 R 0\n", sr, col));
             }
         }
 
-        // No new walls
+        (robots, min_cost)
+    }
+
+    fn output_no_walls(&self) {
+        let n = self.n;
         for _ in 0..n {
             println!("{}", "0".repeat(n - 1));
         }
