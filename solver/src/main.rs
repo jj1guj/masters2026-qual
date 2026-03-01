@@ -860,11 +860,22 @@ impl Solver {
         if starts.is_empty() {
             return None;
         }
+
+        let endpoint_starts: Vec<usize> = starts
+            .iter()
+            .copied()
+            .filter(|&u| adj[u].len() == 1)
+            .collect();
+
+        if endpoint_starts.len() == 2 {
+            starts = endpoint_starts;
+        }
+
         starts.sort_by_key(|&u| adj[u].len());
 
         let start_time = std::time::Instant::now();
         let total_limit = if self.a_k >= 500 {
-            std::time::Duration::from_millis(900)
+            std::time::Duration::from_millis(1600)
         } else {
             std::time::Duration::from_millis(450)
         };
@@ -880,7 +891,7 @@ impl Solver {
             }
 
             // まず高速な greedy 構築を複数回試す
-            let greedy_trials = if self.a_k >= 500 { 20usize } else { 8usize };
+            let greedy_trials = if self.a_k >= 500 { 60usize } else { 8usize };
             for g in 0..greedy_trials {
                 if start_time.elapsed() > total_limit {
                     break 'outer;
@@ -896,7 +907,13 @@ impl Solver {
                 }
             }
 
-            let retries = if adj[s].len() <= 2 { 7usize } else { 4usize };
+            let retries = if adj[s].len() == 1 {
+                12usize
+            } else if adj[s].len() == 2 {
+                7usize
+            } else {
+                4usize
+            };
             for attempt in 0..retries {
                 if start_time.elapsed() > total_limit {
                     break 'outer;
