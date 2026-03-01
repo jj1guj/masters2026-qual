@@ -36,6 +36,23 @@ const REVERSE_SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
     (1, 0, 1, 0), // state 5: R→0, R→0
 ];
 
+/// 2-state automaton #1: avg_cov=215, eff=107.6
+/// s0: L→1, wall:R→1 | s1: F→0, wall:L→1
+const AUTO_2S_A: [(u8, usize, u8, usize); 2] = [(2, 1, 1, 1), (0, 0, 2, 1)];
+/// Mirror of AUTO_2S_A
+const AUTO_2S_B: [(u8, usize, u8, usize); 2] = [(0, 1, 2, 0), (2, 0, 1, 0)];
+
+/// 2-state automaton #2: avg_cov=209, eff=104.5
+/// s0: R→1, wall:L→1 | s1: F→0, wall:R→1
+const AUTO_2S_C: [(u8, usize, u8, usize); 2] = [(1, 1, 2, 1), (0, 0, 1, 1)];
+/// Mirror of AUTO_2S_C
+const AUTO_2S_D: [(u8, usize, u8, usize); 2] = [(0, 1, 1, 0), (1, 0, 2, 0)];
+
+/// 3-state automaton #1: avg_cov=285.8, eff=95.3
+const AUTO_3S_A: [(u8, usize, u8, usize); 3] = [(1, 1, 2, 2), (2, 2, 2, 1), (0, 0, 1, 2)];
+/// Mirror of AUTO_3S_A
+const AUTO_3S_B: [(u8, usize, u8, usize); 3] = [(2, 1, 1, 2), (1, 2, 1, 1), (0, 0, 2, 2)];
+
 struct Solver {
     n: usize,
     a_k: i64,
@@ -207,8 +224,16 @@ impl Solver {
         let n = self.n;
 
         // All automaton patterns to try
-        let automata: Vec<&[(u8, usize, u8, usize)]> =
-            vec![&SNAKE_AUTOMATON, &REVERSE_SNAKE_AUTOMATON];
+        let automata: Vec<&[(u8, usize, u8, usize)]> = vec![
+            &AUTO_2S_A,
+            &AUTO_2S_B,
+            &AUTO_2S_C,
+            &AUTO_2S_D,
+            &AUTO_3S_A,
+            &AUTO_3S_B,
+            &SNAKE_AUTOMATON,
+            &REVERSE_SNAKE_AUTOMATON,
+        ];
 
         // Pre-compute coverage for all (automaton, position, direction) candidates
         let mut cand_auto: Vec<usize> = Vec::new();
@@ -257,12 +282,13 @@ impl Solver {
                         }
                     }
                 }
-                // Need at least a few new cells to justify 6 extra states
+                // Prune: need at least a few new cells
                 if new_cells < 3 {
                     continue;
                 }
 
                 // Compute VC cost with this candidate's coverage added
+                let auto_states = automata[cand_auto[ci]].len();
                 let mut merged = combined.clone();
                 for i in 0..n {
                     for j in 0..n {
@@ -272,9 +298,8 @@ impl Solver {
                     }
                 }
 
-                let auto_states = automata[cand_auto[ci]].len() as i64;
                 let (_, vc_remain) = self.vertex_cover_for_uncovered(&merged);
-                let total = snake_states + auto_states + vc_remain;
+                let total = snake_states + auto_states as i64 + vc_remain;
 
                 if total < best_total {
                     best_total = total;
@@ -296,6 +321,99 @@ impl Solver {
                 current_cost = best_total;
             } else {
                 break;
+            }
+        }
+
+        // === Swap optimization ===
+        // Try removing each selected snake and replacing with a different candidate
+        let mut improved = true;
+        while improved {
+            improved = false;
+            for si in 0..selected.len() {
+                // Recompute combined without selected[si]
+                let mut combined_without = vec![vec![false; n]; n];
+                let mut states_without: i64 = 0;
+                for (sj, &cj) in selected.iter().enumerate() {
+                    if sj == si {
+                        continue;
+                    }
+                    states_without += automata[cand_auto[cj]].len() as i64;
+                    for i in 0..n {
+                        for j in 0..n {
+                            if cand_covered[cj][i][j] {
+                                combined_without[i][j] = true;
+                            }
+                        }
+                    }
+                }
+
+                let (_, vc_without) = self.vertex_cover_for_uncovered(&combined_without);
+                let cost_without = states_without + vc_without;
+
+                // Try replacing with each candidate
+                let mut best_replacement: Option<usize> = None;
+                let mut best_cost = current_cost;
+
+                // Also try just removing (no replacement)
+                if cost_without < best_cost {
+                    best_cost = cost_without;
+                    best_replacement = Some(usize::MAX); // sentinel for "just remove"
+                }
+
+                for ci in 0..num_candidates {
+                    let auto_states = automata[cand_auto[ci]].len();
+                    let mut new_cells = 0usize;
+                    for i in 0..n {
+                        for j in 0..n {
+                            if cand_covered[ci][i][j] && !combined_without[i][j] {
+                                new_cells += 1;
+                            }
+                        }
+                    }
+                    if new_cells < 3 {
+                        continue;
+                    }
+
+                    let mut merged = combined_without.clone();
+                    for i in 0..n {
+                        for j in 0..n {
+                            if cand_covered[ci][i][j] {
+                                merged[i][j] = true;
+                            }
+                        }
+                    }
+                    let (_, vc_remain) = self.vertex_cover_for_uncovered(&merged);
+                    let total = states_without + auto_states as i64 + vc_remain;
+                    if total < best_cost {
+                        best_cost = total;
+                        best_replacement = Some(ci);
+                    }
+                }
+
+                if let Some(repl) = best_replacement {
+                    if repl == usize::MAX {
+                        // Just remove
+                        selected.remove(si);
+                    } else {
+                        selected[si] = repl;
+                    }
+                    // Recompute combined and snake_states
+                    combined = vec![vec![false; n]; n];
+                    snake_states = 0;
+                    for &cj in &selected {
+                        snake_states += automata[cand_auto[cj]].len() as i64;
+                        for i in 0..n {
+                            for j in 0..n {
+                                if cand_covered[cj][i][j] {
+                                    combined[i][j] = true;
+                                }
+                            }
+                        }
+                    }
+                    current_cost = best_cost;
+                    improved = true;
+                    break; // restart the swap loop
+                }
             }
         }
 
