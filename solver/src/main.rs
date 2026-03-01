@@ -85,19 +85,17 @@ impl Solver {
         }
     }
 
-    fn solve(&mut self) {
-        // 壁を伸ばす
-        let mut v_out = [[0; MAX_N - 1]; MAX_N];
-        let mut h_out = [[0; MAX_N]; MAX_N - 1];
+    /// 壁を縦横に伸ばし、長方形化する。追加した壁を (v_out, h_out) で返す。
+    fn extend_walls(&mut self) -> ([[i32; MAX_N - 1]; MAX_N], [[i32; MAX_N]; MAX_N - 1]) {
+        let mut v_out = [[0i32; MAX_N - 1]; MAX_N];
+        let mut h_out = [[0i32; MAX_N]; MAX_N - 1];
 
         // 縦方向: 各列境界 j について壁を上下に伸ばす
         for j in 0..MAX_N - 1 {
             // 下方向に伸ばす
             for i in 0..MAX_N {
                 if self.v[i][j] || v_out[i][j] == 1 {
-                    // i+1 以降に下向きに伸ばす
                     for r in (i + 1)..MAX_N {
-                        // 横壁との衝突チェック: row r の上端交点
                         if r > 0 {
                             let hit = (j < MAX_N - 1 && self.h[r - 1][j + 1]) || self.h[r - 1][j];
                             if hit {
@@ -105,7 +103,7 @@ impl Solver {
                             }
                         }
                         if self.v[r][j] || v_out[r][j] == 1 {
-                            break; // 既存の壁に到達
+                            break;
                         }
                         v_out[r][j] = 1;
                         self.v[r][j] = true;
@@ -115,9 +113,7 @@ impl Solver {
             // 上方向に伸ばす
             for i in (0..MAX_N).rev() {
                 if self.v[i][j] || v_out[i][j] == 1 {
-                    // i-1 以上に上向きに伸ばす
                     for r in (0..i).rev() {
-                        // 横壁との衝突チェック: row r の下端交点
                         if r < MAX_N - 1 {
                             let hit = (j < MAX_N - 1 && self.h[r][j + 1]) || self.h[r][j];
                             if hit {
@@ -140,7 +136,6 @@ impl Solver {
             for j in 0..MAX_N {
                 if self.h[i][j] || h_out[i][j] == 1 {
                     for c in (j + 1)..MAX_N {
-                        // 縦壁との衝突チェック: col c の左端交点
                         if c > 0 {
                             let hit = (i < MAX_N - 1
                                 && (self.v[i + 1][c - 1] || v_out[i + 1][c - 1] == 1))
@@ -161,7 +156,6 @@ impl Solver {
             for j in (0..MAX_N).rev() {
                 if self.h[i][j] || h_out[i][j] == 1 {
                     for c in (0..j).rev() {
-                        // 縦壁との衝突チェック: col c の右端交点
                         if c < MAX_N - 1 {
                             let hit = (i < MAX_N - 1 && (self.v[i + 1][c] || v_out[i + 1][c] == 1))
                                 || (self.v[i][c] || v_out[i][c] == 1);
@@ -179,30 +173,33 @@ impl Solver {
             }
         }
 
-        // 長方形化: 隣接セルの壁パターンが異なる場合に壁を追加
-        // 収束するまで繰り返す
+        // 長方形化: 隣接セルの壁パターンが異なる場合に壁を追加（収束まで繰り返す）
+        self.rectify(&mut v_out, &mut h_out);
+
+        (v_out, h_out)
+    }
+
+    /// 隣接セルの壁パターンの不整合を解消し、全領域を長方形にする
+    fn rectify(
+        &mut self,
+        v_out: &mut [[i32; MAX_N - 1]; MAX_N],
+        h_out: &mut [[i32; MAX_N]; MAX_N - 1],
+    ) {
         loop {
             let mut changed = false;
 
-            // 横方向チェック: (i,j) と (i,j+1) が壁なしで隣接している場合
-            // 上下の壁パターンが異なれば縦壁を追加
+            // 横方向: (i,j) と (i,j+1) の上下壁パターンが異なれば縦壁を追加
             for i in 0..MAX_N {
                 for j in 0..MAX_N - 1 {
                     if self.v[i][j] {
-                        continue; // 既に壁がある
+                        continue;
                     }
                     let mut need_wall = false;
-                    // 上の壁チェック: h[i-1][j] vs h[i-1][j+1]
-                    if i > 0 {
-                        if self.h[i - 1][j] != self.h[i - 1][j + 1] {
-                            need_wall = true;
-                        }
+                    if i > 0 && self.h[i - 1][j] != self.h[i - 1][j + 1] {
+                        need_wall = true;
                     }
-                    // 下の壁チェック: h[i][j] vs h[i][j+1]
-                    if i < MAX_N - 1 {
-                        if self.h[i][j] != self.h[i][j + 1] {
-                            need_wall = true;
-                        }
+                    if i < MAX_N - 1 && self.h[i][j] != self.h[i][j + 1] {
+                        need_wall = true;
                     }
                     if need_wall {
                         self.v[i][j] = true;
@@ -212,25 +209,18 @@ impl Solver {
                 }
             }
 
-            // 縦方向チェック: (i,j) と (i+1,j) が壁なしで隣接している場合
-            // 左右の壁パターンが異なれば横壁を追加
+            // 縦方向: (i,j) と (i+1,j) の左右壁パターンが異なれば横壁を追加
             for i in 0..MAX_N - 1 {
                 for j in 0..MAX_N {
                     if self.h[i][j] {
-                        continue; // 既に壁がある
+                        continue;
                     }
                     let mut need_wall = false;
-                    // 左の壁チェック: v[i][j-1] vs v[i+1][j-1]
-                    if j > 0 {
-                        if self.v[i][j - 1] != self.v[i + 1][j - 1] {
-                            need_wall = true;
-                        }
+                    if j > 0 && self.v[i][j - 1] != self.v[i + 1][j - 1] {
+                        need_wall = true;
                     }
-                    // 右の壁チェック: v[i][j] vs v[i+1][j]
-                    if j < MAX_N - 1 {
-                        if self.v[i][j] != self.v[i + 1][j] {
-                            need_wall = true;
-                        }
+                    if j < MAX_N - 1 && self.v[i][j] != self.v[i + 1][j] {
+                        need_wall = true;
                     }
                     if need_wall {
                         self.h[i][j] = true;
@@ -244,7 +234,10 @@ impl Solver {
                 break;
             }
         }
+    }
 
+    /// DFSで連結成分を求め、各領域の代表点（ロボット配置位置）を返す
+    fn find_regions(&self) -> Vec<(usize, usize)> {
         let mut area_map = [[-1; MAX_N]; MAX_N];
         let mut rect_count = 0;
         let mut robot_pos: Vec<(usize, usize)> = Vec::new();
@@ -258,7 +251,16 @@ impl Solver {
                 }
             }
         }
+        robot_pos
+    }
 
+    /// ロボットと壁の情報を出力する
+    fn output(
+        &self,
+        robot_pos: &[(usize, usize)],
+        v_out: &[[i32; MAX_N - 1]; MAX_N],
+        h_out: &[[i32; MAX_N]; MAX_N - 1],
+    ) {
         println!("{}", robot_pos.len());
         for pos in robot_pos {
             println!("6 {} {} R", pos.0, pos.1);
@@ -270,19 +272,24 @@ impl Solver {
             println!("L 0 L 0");
         }
 
-        // No new walls
         for i in 0..MAX_N {
             for j in 0..MAX_N - 1 {
                 print!("{}", v_out[i][j]);
             }
-            println!("");
+            println!();
         }
         for i in 0..MAX_N - 1 {
             for j in 0..MAX_N {
                 print!("{}", h_out[i][j]);
             }
-            println!("");
+            println!();
         }
+    }
+
+    fn solve(&mut self) {
+        let (v_out, h_out) = self.extend_walls();
+        let robot_pos = self.find_regions();
+        self.output(&robot_pos, &v_out, &h_out);
     }
 }
 
