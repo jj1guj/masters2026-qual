@@ -320,10 +320,7 @@
                             <option value="C">C</option>
                         </select>
                     </div>
-                    <div class="btn-row">
-                        <button class="btn btn-primary" id="generate-btn" onclick="generateInput()">🎲 生成</button>
-                        <span id="generate-status" style="font-size:0.8rem;color:#aaa;"></span>
-                    </div>
+                    <span id="generate-status" style="font-size:0.8rem;color:#aaa;"></span>
                 </div>
 
                 <div class="panel-section">
@@ -488,11 +485,10 @@
         let generateTimer = null;
         document.getElementById('seed-input').addEventListener('input', () => {
             clearTimeout(generateTimer);
-            generateTimer = setTimeout(generateInput, 400);
+            generateTimer = setTimeout(generateInput, 100);
         });
         document.getElementById('problem-select').addEventListener('change', () => {
-            clearTimeout(generateTimer);
-            generateTimer = setTimeout(generateInput, 400);
+            generateInput();
         });
 
         function onInputChanged() {
@@ -599,9 +595,7 @@
         async function generateInput() {
             const seed = parseInt(document.getElementById('seed-input').value);
             const problem = document.getElementById('problem-select').value;
-            const btn = document.getElementById('generate-btn');
             const statusEl = document.getElementById('generate-status');
-            btn.disabled = true;
             statusEl.textContent = '生成中...';
 
             try {
@@ -621,7 +615,6 @@
             } catch (e) {
                 statusEl.textContent = 'サーバーエラー: ' + e.message;
             }
-            btn.disabled = false;
         }
 
         // ============================================================
