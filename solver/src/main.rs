@@ -756,13 +756,12 @@ impl Solver {
         path: &mut Vec<usize>,
         visited_count: usize,
         seed: &mut u64,
-        start_time: std::time::Instant,
-        limit: std::time::Duration,
+        deadline: std::time::Instant,
     ) -> bool {
         if visited_count == MAX_N * MAX_N {
             return true;
         }
-        if start_time.elapsed() > limit {
+        if std::time::Instant::now() >= deadline {
             return false;
         }
 
@@ -795,8 +794,7 @@ impl Solver {
                     path,
                     visited_count + 1,
                     seed,
-                    start_time,
-                    limit,
+                    deadline,
                 )
             {
                 return true;
@@ -852,7 +850,7 @@ impl Solver {
         Some(path)
     }
 
-    fn find_hamilton_path(&self) -> Option<Vec<(usize, usize)>> {
+    fn find_hamilton_path(&self, deadline: std::time::Instant) -> Option<Vec<(usize, usize)>> {
         let adj = self.build_open_graph();
         let mut starts: Vec<usize> = (0..MAX_N * MAX_N)
             .filter(|&u| !adj[u].is_empty())
@@ -873,27 +871,20 @@ impl Solver {
 
         starts.sort_by_key(|&u| adj[u].len());
 
-        let start_time = std::time::Instant::now();
-        let total_limit = if self.a_k >= 500 {
-            std::time::Duration::from_millis(1600)
-        } else {
-            std::time::Duration::from_millis(450)
-        };
-
         let seed_base = 0x9E3779B97F4A7C15u64
             ^ (self.a_k as u64)
             ^ ((self.a_m as u64) << 16)
             ^ ((self.a_w as u64) << 40);
 
         'outer: for (rank, &s) in starts.iter().enumerate() {
-            if start_time.elapsed() > total_limit {
+            if std::time::Instant::now() >= deadline {
                 break;
             }
 
             // まず高速な greedy 構築を複数回試す
             let greedy_trials = if self.a_k >= 500 { 60usize } else { 8usize };
             for g in 0..greedy_trials {
-                if start_time.elapsed() > total_limit {
+                if std::time::Instant::now() >= deadline {
                     break 'outer;
                 }
                 let mut seed = seed_base
@@ -915,7 +906,7 @@ impl Solver {
                 4usize
             };
             for attempt in 0..retries {
-                if start_time.elapsed() > total_limit {
+                if std::time::Instant::now() >= deadline {
                     break 'outer;
                 }
 
@@ -935,8 +926,7 @@ impl Solver {
                     &mut path,
                     1,
                     &mut seed,
-                    start_time,
-                    total_limit,
+                    deadline,
                 ) {
                     let route = path.into_iter().map(Self::idx_cell).collect::<Vec<_>>();
                     return Some(route);
@@ -1006,12 +996,13 @@ impl Solver {
 
     fn try_single_robot_route(
         &self,
+        deadline: std::time::Instant,
     ) -> Option<(
         Vec<((usize, usize), usize, usize)>,
         [[i32; MAX_N - 1]; MAX_N],
         [[i32; MAX_N]; MAX_N - 1],
     )> {
-        let route = self.find_hamilton_path()?;
+        let route = self.find_hamilton_path(deadline)?;
         let (v_out, h_out) = self.build_walls_for_route(&route);
 
         let start = route[0];
@@ -1479,8 +1470,16 @@ impl Solver {
     }
 
     fn solve(&mut self) {
-        let mut single = self.try_single_robot_route();
-        let multi = self.solve_multi_robot();
+        let solve_start = std::time::Instant::now();
+        let global_deadline = solve_start + std::time::Duration::from_millis(1800);
+
+        let single_budget_ms = if self.a_k >= 500 { 1780u64 } else { 800u64 };
+        let single_deadline = std::cmp::min(
+            global_deadline,
+            solve_start + std::time::Duration::from_millis(single_budget_ms),
+        );
+
+        let mut single = self.try_single_robot_route(single_deadline);
 
         if let Some((ref mut s_cfg, ref mut s_v, ref mut s_h)) = single {
             if s_cfg.len() == 1 {
@@ -1489,6 +1488,16 @@ impl Solver {
                 s_cfg[0].1 = new_dir;
             }
         }
+
+        // 時間がほぼ残っていない場合は single をそのまま採用して TLE を避ける
+        if std::time::Instant::now() + std::time::Duration::from_millis(120) >= global_deadline {
+            if let Some((s_cfg, s_v, s_h)) = single {
+                self.output(&s_cfg, &s_v, &s_h);
+                return;
+            }
+        }
+
+        let multi = self.solve_multi_robot();
 
         if let Some((s_cfg, s_v, s_h)) = single {
             let single_cost = self.solution_cost(&s_cfg, &s_v, &s_h);
