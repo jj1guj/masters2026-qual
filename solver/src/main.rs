@@ -2,6 +2,8 @@ use proconio::{input, marker::Chars};
 
 const MAX_N: usize = 20;
 const K: usize = MAX_N * MAX_N;
+const DX: [i32; 4] = [-1, 0, 0, 1];
+const DY: [i32; 4] = [0, -1, 1, 0];
 
 struct Solver {
     n: usize,
@@ -51,14 +53,43 @@ impl Solver {
         }
     }
 
+    fn dfs(
+        &self,
+        pos: (usize, usize),
+        area_map: &mut [[i32; MAX_N]; MAX_N],
+        v: &[[bool; MAX_N - 1]; MAX_N],
+        h: &[[bool; MAX_N]; MAX_N - 1],
+    ) {
+        let (x, y) = pos;
+        for i in 0..4 {
+            let nx_i32 = x as i32 + DX[i];
+            let ny_i32 = y as i32 + DY[i];
+            if 0 <= nx_i32 && nx_i32 < MAX_N as i32 && 0 <= ny_i32 && ny_i32 < MAX_N as i32 {
+                let nx = nx_i32 as usize;
+                let ny = ny_i32 as usize;
+
+                // Check for walls between (x,y) and (nx,ny)
+                let blocked = match i {
+                    0 => x > 0 && h[nx][y],        // up: h[x-1][y]
+                    1 => y > 0 && v[x][ny],        // left: v[x][y-1]
+                    2 => y < MAX_N - 1 && v[x][y], // right: v[x][y]
+                    3 => x < MAX_N - 1 && h[x][y], // down: h[x][y]
+                    _ => unreachable!(),
+                };
+
+                if !blocked && area_map[nx][ny] == -1 {
+                    area_map[nx][ny] = area_map[x][y];
+                    self.dfs((nx, ny), area_map, &v, &h);
+                }
+            }
+        }
+    }
+
     fn solve(&mut self) {
         // 壁を伸ばす
         let mut v_out = [[0; MAX_N - 1]; MAX_N];
         let mut h_out = [[0; MAX_N]; MAX_N - 1];
 
-        let mut start_pos = 0;
-        let mut end_pos = 0;
-        let mut flg = false;
         // 縦方向: 各列境界 j について壁を上下に伸ばす
         for j in 0..MAX_N - 1 {
             // 下方向に伸ばす
@@ -77,6 +108,7 @@ impl Solver {
                             break; // 既存の壁に到達
                         }
                         v_out[r][j] = 1;
+                        self.v[r][j] = true;
                     }
                 }
             }
@@ -96,6 +128,7 @@ impl Solver {
                             break;
                         }
                         v_out[r][j] = 1;
+                        self.v[r][j] = true;
                     }
                 }
             }
@@ -120,6 +153,7 @@ impl Solver {
                             break;
                         }
                         h_out[i][c] = 1;
+                        self.h[i][c] = true;
                     }
                 }
             }
@@ -139,20 +173,36 @@ impl Solver {
                             break;
                         }
                         h_out[i][c] = 1;
+                        self.h[i][c] = true;
                     }
                 }
             }
         }
 
-        println!("{}", 1);
+        let mut area_map = [[-1; MAX_N]; MAX_N];
+        let mut rect_count = 0;
+        let mut robot_pos: Vec<(usize, usize)> = Vec::new();
+        for i in 0..MAX_N {
+            for j in 0..MAX_N {
+                if area_map[i][j] == -1 {
+                    rect_count += 1;
+                    area_map[i][j] = rect_count;
+                    robot_pos.push((i, j));
+                    self.dfs((i, j), &mut area_map, &self.v, &self.h);
+                }
+            }
+        }
 
-        println!("6 0 0 R");
-        println!("F 0 R 1");
-        println!("F 2 R 2");
-        println!("R 3 R 3");
-        println!("F 3 L 4");
-        println!("F 5 L 5");
-        println!("L 0 L 0");
+        println!("{}", robot_pos.len());
+        for pos in robot_pos {
+            println!("6 {} {} R", pos.0, pos.1);
+            println!("F 0 R 1");
+            println!("F 2 R 2");
+            println!("R 3 R 3");
+            println!("F 3 L 4");
+            println!("F 5 L 5");
+            println!("L 0 L 0");
+        }
 
         // No new walls
         for i in 0..MAX_N {
