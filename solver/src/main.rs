@@ -26,6 +26,16 @@ const SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
     (2, 0, 2, 0), // state 5: L→0, L→0
 ];
 
+/// 6-state reverse snake automaton (mirror of snake: swaps R↔L)
+const REVERSE_SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
+    (0, 0, 2, 1), // state 0: F→0, L→1
+    (0, 2, 2, 2), // state 1: F→2, L→2
+    (2, 3, 2, 3), // state 2: L→3, L→3
+    (0, 3, 1, 4), // state 3: F→3, R→4
+    (0, 5, 1, 5), // state 4: F→5, R→5
+    (1, 0, 1, 0), // state 5: R→0, R→0
+];
+
 struct Solver {
     n: usize,
     a_k: i64,
@@ -159,38 +169,6 @@ impl Solver {
         vec![vec![false; n]; n]
     }
 
-    /// Try the snake automaton at all starting positions & directions,
-    /// find the one that covers the most cells in its periodic cycle.
-    fn best_snake_coverage(&self) -> (usize, usize, usize, Vec<Vec<bool>>) {
-        let n = self.n;
-        let dirs = [0, 1, 2, 3]; // U, R, D, L
-        let mut best_count = 0;
-        let mut best_r = 0;
-        let mut best_c = 0;
-        let mut best_d = 0;
-        let mut best_covered = vec![vec![false; n]; n];
-
-        for r in 0..n {
-            for c in 0..n {
-                for &d in &dirs {
-                    let covered = self.simulate_automaton(&SNAKE_AUTOMATON, r, c, d);
-                    let count: usize = covered
-                        .iter()
-                        .map(|row| row.iter().filter(|&&x| x).count())
-                        .sum();
-                    if count > best_count {
-                        best_count = count;
-                        best_r = r;
-                        best_c = c;
-                        best_d = d;
-                        best_covered = covered;
-                    }
-                }
-            }
-        }
-        (best_r, best_c, best_d, best_covered)
-    }
-
     fn dir_char(d: usize) -> char {
         match d {
             0 => 'U',
@@ -201,40 +179,142 @@ impl Solver {
         }
     }
 
+    fn action_char(a: u8) -> char {
+        match a {
+            0 => 'F',
+            1 => 'R',
+            2 => 'L',
+            _ => unreachable!(),
+        }
+    }
+
+    /// Print automaton robot definition to stdout
+    fn print_automaton(automaton: &[(u8, usize, u8, usize)], r: usize, c: usize, d: usize) {
+        let m = automaton.len();
+        println!("{} {} {} {}", m, r, c, Self::dir_char(d));
+        for &(a0, b0, a1, b1) in automaton {
+            println!(
+                "{} {} {} {}",
+                Self::action_char(a0),
+                b0,
+                Self::action_char(a1),
+                b1
+            );
+        }
+    }
+
     fn solve(&self) {
         let n = self.n;
 
-        // === Approach 1: Vertex cover on all cells ===
-        let uncovered_all = vec![vec![false; n]; n]; // no pre-covered cells
-        let (vc_robots, vc_cost) = self.vertex_cover_for_uncovered(&uncovered_all);
+        // All automaton patterns to try
+        let automata: Vec<&[(u8, usize, u8, usize)]> =
+            vec![&SNAKE_AUTOMATON, &REVERSE_SNAKE_AUTOMATON];
 
-        // === Approach 2: Snake automaton + vertex cover on remaining ===
-        let (sr, sc, sd, snake_covered) = self.best_snake_coverage();
-        let (remain_robots, remain_cost) = self.vertex_cover_for_uncovered(&snake_covered);
-        let snake_total_cost = 6i64 + remain_cost;
+        // Pre-compute coverage for all (automaton, position, direction) candidates
+        let mut cand_auto: Vec<usize> = Vec::new();
+        let mut cand_r: Vec<usize> = Vec::new();
+        let mut cand_c: Vec<usize> = Vec::new();
+        let mut cand_d: Vec<usize> = Vec::new();
+        let mut cand_covered: Vec<Vec<Vec<bool>>> = Vec::new();
 
-        if snake_total_cost < vc_cost {
-            // Output snake + VC for uncovered
-            let num_robots = 1 + remain_robots.len();
-            println!("{}", num_robots);
+        for (ai, automaton) in automata.iter().enumerate() {
+            for r in 0..n {
+                for c in 0..n {
+                    for d in 0..4 {
+                        let covered = self.simulate_automaton(automaton, r, c, d);
+                        cand_auto.push(ai);
+                        cand_r.push(r);
+                        cand_c.push(c);
+                        cand_d.push(d);
+                        cand_covered.push(covered);
+                    }
+                }
+            }
+        }
+        let num_candidates = cand_auto.len();
 
-            // Snake robot
-            println!("6 {} {} {}", sr, sc, Self::dir_char(sd));
-            println!("F 0 R 1");
-            println!("F 2 R 2");
-            println!("R 3 R 3");
-            println!("F 3 L 4");
-            println!("F 5 L 5");
-            println!("L 0 L 0");
+        // === Approach 1: Pure vertex cover (no snakes) ===
+        let no_cover = vec![vec![false; n]; n];
+        let (vc_robots_pure, vc_cost_pure) = self.vertex_cover_for_uncovered(&no_cover);
 
-            // VC robots for remaining
+        // === Approach 2: Greedy multi-snake + VC ===
+        let mut selected: Vec<usize> = Vec::new();
+        let mut combined = vec![vec![false; n]; n];
+        let mut snake_states: i64 = 0;
+        let mut current_cost = vc_cost_pure;
+
+        loop {
+            let mut best_ci: Option<usize> = None;
+            let mut best_total: i64 = current_cost;
+
+            for ci in 0..num_candidates {
+                // Count new cells this candidate would add
+                let mut new_cells = 0usize;
+                for i in 0..n {
+                    for j in 0..n {
+                        if cand_covered[ci][i][j] && !combined[i][j] {
+                            new_cells += 1;
+                        }
+                    }
+                }
+                // Need at least a few new cells to justify 6 extra states
+                if new_cells < 3 {
+                    continue;
+                }
+
+                // Compute VC cost with this candidate's coverage added
+                let mut merged = combined.clone();
+                for i in 0..n {
+                    for j in 0..n {
+                        if cand_covered[ci][i][j] {
+                            merged[i][j] = true;
+                        }
+                    }
+                }
+
+                let auto_states = automata[cand_auto[ci]].len() as i64;
+                let (_, vc_remain) = self.vertex_cover_for_uncovered(&merged);
+                let total = snake_states + auto_states + vc_remain;
+
+                if total < best_total {
+                    best_total = total;
+                    best_ci = Some(ci);
+                }
+            }
+
+            if let Some(ci) = best_ci {
+                let auto_states = automata[cand_auto[ci]].len() as i64;
+                snake_states += auto_states;
+                for i in 0..n {
+                    for j in 0..n {
+                        if cand_covered[ci][i][j] {
+                            combined[i][j] = true;
+                        }
+                    }
+                }
+                selected.push(ci);
+                current_cost = best_total;
+            } else {
+                break;
+            }
+        }
+
+        // Compare pure VC vs greedy snake+VC and output the better one
+        if current_cost < vc_cost_pure {
+            let (remain_robots, _) = self.vertex_cover_for_uncovered(&combined);
+            let total_robots = selected.len() + remain_robots.len();
+            println!("{}", total_robots);
+
+            for &ci in &selected {
+                Self::print_automaton(automata[cand_auto[ci]], cand_r[ci], cand_c[ci], cand_d[ci]);
+            }
+
             for robot in &remain_robots {
                 print!("{}", robot);
             }
         } else {
-            // Output pure VC
-            println!("{}", vc_robots.len());
-            for robot in &vc_robots {
+            println!("{}", vc_robots_pure.len());
+            for robot in &vc_robots_pure {
                 print!("{}", robot);
             }
         }
