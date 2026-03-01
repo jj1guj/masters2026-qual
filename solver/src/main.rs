@@ -2,6 +2,7 @@ use proconio::input;
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::time::Instant;
 
 const N: usize = 20;
@@ -391,6 +392,327 @@ impl Solver {
         result
     }
 
+    // ---- BFS helpers ----
+
+    fn bfs_path(&self, si: usize, sj: usize, ti: usize, tj: usize) -> Vec<(usize, usize)> {
+        if si == ti && sj == tj {
+            return vec![(si, sj)];
+        }
+        let mut prev = vec![vec![(usize::MAX, usize::MAX); N]; N];
+        let mut queue = VecDeque::new();
+        prev[si][sj] = (si, sj);
+        queue.push_back((si, sj));
+        while let Some((i, j)) = queue.pop_front() {
+            for d in 0..4 {
+                if !self.can_move(i, j, d) {
+                    continue;
+                }
+                let ni = ((i as i32) + DI[d]) as usize;
+                let nj = ((j as i32) + DJ[d]) as usize;
+                if prev[ni][nj].0 == usize::MAX {
+                    prev[ni][nj] = (i, j);
+                    if ni == ti && nj == tj {
+                        let mut path = vec![];
+                        let (mut pi, mut pj) = (ti, tj);
+                        while (pi, pj) != (si, sj) {
+                            path.push((pi, pj));
+                            let (qi, qj) = prev[pi][pj];
+                            pi = qi;
+                            pj = qj;
+                        }
+                        path.push((si, sj));
+                        path.reverse();
+                        return path;
+                    }
+                    queue.push_back((ni, nj));
+                }
+            }
+        }
+        vec![]
+    }
+
+    fn bfs_nearest_uncovered(
+        &self,
+        si: usize,
+        sj: usize,
+        visited: &[[bool; N]; N],
+    ) -> Option<(usize, usize)> {
+        let mut seen = [[false; N]; N];
+        let mut queue = VecDeque::new();
+        seen[si][sj] = true;
+        queue.push_back((si, sj));
+        while let Some((i, j)) = queue.pop_front() {
+            if !visited[i][j] {
+                return Some((i, j));
+            }
+            for d in 0..4 {
+                if !self.can_move(i, j, d) {
+                    continue;
+                }
+                let ni = ((i as i32) + DI[d]) as usize;
+                let nj = ((j as i32) + DJ[d]) as usize;
+                if !seen[ni][nj] {
+                    seen[ni][nj] = true;
+                    queue.push_back((ni, nj));
+                }
+            }
+        }
+        None
+    }
+
+    // ---- Snake sweep tour ----
+
+    /// Snake sweep: zigzag rows/cols with BFS navigation when stuck
+    fn snake_sweep_tour(
+        &self,
+        si: usize,
+        sj: usize,
+        sweep_dir: usize,
+        step_dir: usize,
+    ) -> Vec<(usize, usize)> {
+        let mut visited = [[false; N]; N];
+        let mut tour = Vec::with_capacity(800);
+        let mut ci = si;
+        let mut cj = sj;
+        let mut cur_sweep = sweep_dir;
+        let mut total_visited = 0usize;
+
+        visited[ci][cj] = true;
+        total_visited += 1;
+        tour.push((ci, cj));
+
+        loop {
+            // Sweep in current direction until wall or visited cell
+            while self.can_move(ci, cj, cur_sweep) {
+                let ni = ((ci as i32) + DI[cur_sweep]) as usize;
+                let nj = ((cj as i32) + DJ[cur_sweep]) as usize;
+                if visited[ni][nj] {
+                    break;
+                }
+                ci = ni;
+                cj = nj;
+                visited[ci][cj] = true;
+                total_visited += 1;
+                tour.push((ci, cj));
+            }
+
+            if total_visited == N * N {
+                break;
+            }
+
+            // Try step in secondary direction, then opposite
+            let mut stepped = false;
+            for &sd in &[step_dir, (step_dir + 2) % 4] {
+                if self.can_move(ci, cj, sd) {
+                    let ni = ((ci as i32) + DI[sd]) as usize;
+                    let nj = ((cj as i32) + DJ[sd]) as usize;
+                    if !visited[ni][nj] {
+                        ci = ni;
+                        cj = nj;
+                        visited[ci][cj] = true;
+                        total_visited += 1;
+                        tour.push((ci, cj));
+                        cur_sweep = (cur_sweep + 2) % 4; // reverse sweep
+                        stepped = true;
+                        break;
+                    }
+                }
+            }
+            if stepped {
+                continue;
+            }
+
+            // Stuck: BFS to nearest uncovered cell
+            if let Some((ti, tj)) = self.bfs_nearest_uncovered(ci, cj, &visited) {
+                let path = self.bfs_path(ci, cj, ti, tj);
+                for &(ni, nj) in &path[1..] {
+                    tour.push((ni, nj));
+                    if !visited[ni][nj] {
+                        visited[ni][nj] = true;
+                        total_visited += 1;
+                    }
+                    ci = ni;
+                    cj = nj;
+                }
+            } else {
+                break;
+            }
+        }
+
+        // Return to start
+        if (ci, cj) != (si, sj) {
+            let path = self.bfs_path(ci, cj, si, sj);
+            for &(ni, nj) in &path[1..] {
+                tour.push((ni, nj));
+            }
+        }
+
+        tour
+    }
+
+    // ---- Snake automata (8 states) ----
+
+    fn snake_candidates() -> Vec<(Vec<AutoState>, usize, usize, usize)> {
+        // Automaton A: R-then-L pattern
+        let auto_a = vec![
+            AutoState {
+                act0: 'F',
+                next0: 0,
+                act1: 'R',
+                next1: 1,
+            }, // RunF, wall→R
+            AutoState {
+                act0: 'F',
+                next0: 2,
+                act1: 'R',
+                next1: 1,
+            }, // step 1, wall→dummy
+            AutoState {
+                act0: 'R',
+                next0: 3,
+                act1: 'R',
+                next1: 3,
+            }, // turn R
+            AutoState {
+                act0: 'F',
+                next0: 3,
+                act1: 'L',
+                next1: 4,
+            }, // RunF, wall→L
+            AutoState {
+                act0: 'F',
+                next0: 5,
+                act1: 'L',
+                next1: 6,
+            }, // step 1, wall→return
+            AutoState {
+                act0: 'L',
+                next0: 0,
+                act1: 'L',
+                next1: 0,
+            }, // turn L
+            AutoState {
+                act0: 'L',
+                next0: 7,
+                act1: 'L',
+                next1: 7,
+            }, // turn (return)
+            AutoState {
+                act0: 'F',
+                next0: 7,
+                act1: 'R',
+                next1: 0,
+            }, // RunF return
+        ];
+        // Automaton B: L-then-R pattern (mirror)
+        let auto_b = vec![
+            AutoState {
+                act0: 'F',
+                next0: 0,
+                act1: 'L',
+                next1: 1,
+            },
+            AutoState {
+                act0: 'F',
+                next0: 2,
+                act1: 'L',
+                next1: 1,
+            },
+            AutoState {
+                act0: 'L',
+                next0: 3,
+                act1: 'L',
+                next1: 3,
+            },
+            AutoState {
+                act0: 'F',
+                next0: 3,
+                act1: 'R',
+                next1: 4,
+            },
+            AutoState {
+                act0: 'F',
+                next0: 5,
+                act1: 'R',
+                next1: 6,
+            },
+            AutoState {
+                act0: 'R',
+                next0: 0,
+                act1: 'R',
+                next1: 0,
+            },
+            AutoState {
+                act0: 'R',
+                next0: 7,
+                act1: 'R',
+                next1: 7,
+            },
+            AutoState {
+                act0: 'F',
+                next0: 7,
+                act1: 'L',
+                next1: 0,
+            },
+        ];
+
+        vec![
+            (auto_a.clone(), 0, 0, 1),     // Row snake from (0,0) facing R
+            (auto_b.clone(), 0, N - 1, 3), // Row snake from (0,19) facing L
+            (auto_b.clone(), 0, 0, 2),     // Col snake from (0,0) facing D
+            (auto_a.clone(), N - 1, 0, 0), // Col snake from (19,0) facing U
+        ]
+    }
+
+    /// Simulate automaton on the actual grid and check if all N*N cells
+    /// are visited in the periodic (cycle) part of the trajectory.
+    fn simulate_and_check(&self, states: &[AutoState], si: usize, sj: usize, sd: usize) -> bool {
+        let m = states.len();
+        let total_configs = m * N * N * 4;
+        let config_id =
+            |i: usize, j: usize, d: usize, s: usize| -> usize { ((i * N + j) * 4 + d) * m + s };
+
+        let mut first_seen = vec![usize::MAX; total_configs];
+        let mut positions: Vec<(usize, usize)> = Vec::with_capacity(total_configs + 1);
+        let (mut ci, mut cj, mut cd, mut cs) = (si, sj, sd, 0usize);
+
+        for step in 0..=total_configs {
+            let cid = config_id(ci, cj, cd, cs);
+            if cid >= total_configs {
+                return false;
+            }
+            if first_seen[cid] != usize::MAX {
+                let cycle_start = first_seen[cid];
+                let mut visited = [[false; N]; N];
+                for k in cycle_start..step {
+                    let (pi, pj) = positions[k];
+                    visited[pi][pj] = true;
+                }
+                return (0..N).all(|i| (0..N).all(|j| visited[i][j]));
+            }
+            first_seen[cid] = step;
+            positions.push((ci, cj));
+
+            let front_wall = !self.can_move(ci, cj, cd);
+            let (action, ns) = if front_wall {
+                (states[cs].act1, states[cs].next1)
+            } else {
+                (states[cs].act0, states[cs].next0)
+            };
+            match action {
+                'F' => {
+                    ci = ((ci as i32) + DI[cd]) as usize;
+                    cj = ((cj as i32) + DJ[cd]) as usize;
+                }
+                'R' => cd = (cd + 1) % 4,
+                'L' => cd = (cd + 3) % 4,
+                _ => {}
+            }
+            cs = ns;
+        }
+        false
+    }
+
     // ---- Build solution from tour ----
 
     fn build_solution(&self, tour: &[(usize, usize)], init_dir: usize) -> Option<Solution> {
@@ -418,13 +740,67 @@ impl Solver {
         let mut best_cost = usize::MAX;
         let mut iters = 0u64;
 
-        // Deterministic snake from (0,0)
+        // Try snake automata (8 states each, massive improvement if they work)
+        for (states, si, sj, sd) in Self::snake_candidates() {
+            if self.simulate_and_check(&states, si, sj, sd) {
+                let cost = states.len();
+                eprintln!("Snake OK! states={} start=({},{}) dir={}", cost, si, sj, sd);
+                if cost < best_cost {
+                    best_cost = cost;
+                    best = Some(Solution {
+                        states,
+                        start_i: si,
+                        start_j: sj,
+                        start_dir: sd,
+                    });
+                }
+            }
+        }
+
+        // Try snake sweep variants (4 corners × 2 orientations = 8)
+        let sweep_variants: [(usize, usize, usize, usize); 8] = [
+            (0, 0, 1, 2),         // (0,0) sweep R, step D
+            (0, N - 1, 3, 2),     // (0,19) sweep L, step D
+            (N - 1, 0, 1, 0),     // (19,0) sweep R, step U
+            (N - 1, N - 1, 3, 0), // (19,19) sweep L, step U
+            (0, 0, 2, 1),         // (0,0) sweep D, step R
+            (0, N - 1, 2, 3),     // (0,19) sweep D, step L
+            (N - 1, 0, 0, 1),     // (19,0) sweep U, step R
+            (N - 1, N - 1, 0, 3), // (19,19) sweep U, step L
+        ];
+        for &(si, sj, sweep_dir, step_dir) in &sweep_variants {
+            let tour = self.snake_sweep_tour(si, sj, sweep_dir, step_dir);
+            if tour.len() < 2 {
+                continue;
+            }
+            for init_dir in 0..4 {
+                if let Some(sol) = self.build_solution(&tour, init_dir) {
+                    if sol.states.len() < best_cost {
+                        eprintln!(
+                            "Sweep: states={} start=({},{}) sw={} st={} id={}",
+                            sol.states.len(),
+                            si,
+                            sj,
+                            sweep_dir,
+                            step_dir,
+                            init_dir
+                        );
+                        best_cost = sol.states.len();
+                        best = Some(sol);
+                    }
+                }
+            }
+        }
+
+        // Deterministic DFS from (0,0)
         {
             let tour = self.dfs_euler_tour_from(0, 0, &mut rng, false);
             let d = Self::direction_between(tour[0].0, tour[0].1, tour[1].0, tour[1].1);
             if let Some(sol) = self.build_solution(&tour, d) {
-                best_cost = sol.states.len();
-                best = Some(sol);
+                if sol.states.len() < best_cost {
+                    best_cost = sol.states.len();
+                    best = Some(sol);
+                }
             }
             iters += 1;
         }
