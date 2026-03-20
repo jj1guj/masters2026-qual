@@ -404,6 +404,17 @@
                         <input type="range" id="anim-slider" min="0" max="0" value="0" style="flex:1;">
                         <span id="anim-step-label" style="font-size:0.75rem;color:#aaa;min-width:55px;">0 / 0</span>
                     </div>
+                    <div class="controls-row">
+                        <label style="font-size:0.8rem;color:#ccc;min-width:58px;">動画品質:</label>
+                        <select id="video-quality" style="flex:1;">
+                            <option value="high">高画質</option>
+                            <option value="standard">標準</option>
+                            <option value="compact" selected>小さめ</option>
+                        </select>
+                    </div>
+                    <div class="btn-row" style="margin-top:10px;">
+                        <button id="export-mp4-btn" class="btn btn-secondary" onclick="exportMp4()">💾 MP4保存</button>
+                    </div>
                 </div>
 
                 <div class="panel-section">
@@ -457,6 +468,7 @@
         </div>
     </div>
 
+    <script src="/static/mp4-muxer.js"></script>
     <script>
         // ============================================================
         // State
@@ -470,6 +482,7 @@
         let animPlaying = false;
         let animSpeed = 10;
         let animIntervalId = null;
+        let forceAnimationRender = false;
 
         // ============================================================
         // File loading
@@ -690,6 +703,8 @@
             const canvas = getCanvas();
             const ctx = getCtx();
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#0a0a1a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
         function drawInputOnly() {
@@ -699,19 +714,25 @@
             draw();
         }
 
-        function draw() {
-            const canvas = getCanvas();
-            const ctx = getCtx();
+        // Render a single frame to any canvas context.
+        // step: animation step number, or null for static (non-animation) mode.
+        function drawFrameToCtx(targetCtx, canvasWidth, canvasHeight, step) {
             const data = currentInputData;
-            if (!data) { clearCanvas(); return; }
+            if (!data) {
+                targetCtx.fillStyle = '#0a0a1a';
+                targetCtx.fillRect(0, 0, canvasWidth, canvasHeight);
+                return;
+            }
 
             const n = data.n;
             const padding = 30;
-            const cellSize = Math.floor((Math.min(canvas.width, canvas.height) - 2 * padding) / n);
+            const cellSize = Math.floor((Math.min(canvasWidth, canvasHeight) - 2 * padding) / n);
             const offsetX = padding;
             const offsetY = padding;
 
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            targetCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+            targetCtx.fillStyle = '#0a0a1a';
+            targetCtx.fillRect(0, 0, canvasWidth, canvasHeight);
 
             // Draw cells
             const showRoutes = document.getElementById('show-routes').checked;
@@ -719,8 +740,8 @@
             const showHeadOnly = document.getElementById('show-head-only').checked;
             const selectedRobot = parseInt(document.getElementById('robot-select').value);
 
-            // Animation mode detection
-            const isAnimMode = (animStep > 0 || animPlaying) && currentScoreData && currentScoreData.routes;
+            // Animation mode: active when an explicit step is provided
+            const isAnimMode = step !== null && currentScoreData && currentScoreData.routes;
             let animVisited = null;
             if (isAnimMode) {
                 const routes = currentScoreData.routes;
@@ -731,7 +752,7 @@
                     const tail = routes[k].tail;
                     const period = Math.max(tail.length - 1, 1);
                     const totalUnique = head.length + period - 1;
-                    const maxT = Math.min(animStep, totalUnique);
+                    const maxT = Math.min(step, totalUnique);
                     for (let t = 0; t < head.length && t <= maxT; t++) {
                         animVisited[head[t][0]][head[t][1]] = true;
                     }
@@ -760,13 +781,13 @@
                             color = 'rgba(46, 213, 115, 0.25)';
                         }
                     }
-                    ctx.fillStyle = color;
-                    ctx.fillRect(x, y, cellSize, cellSize);
+                    targetCtx.fillStyle = color;
+                    targetCtx.fillRect(x, y, cellSize, cellSize);
 
                     // Cell border
-                    ctx.strokeStyle = '#333';
-                    ctx.lineWidth = 0.5;
-                    ctx.strokeRect(x, y, cellSize, cellSize);
+                    targetCtx.strokeStyle = '#333';
+                    targetCtx.lineWidth = 0.5;
+                    targetCtx.strokeRect(x, y, cellSize, cellSize);
                 }
             }
 
@@ -787,8 +808,8 @@
                         if (headVisited[i][j]) {
                             const x = offsetX + j * cellSize;
                             const y = offsetY + i * cellSize;
-                            ctx.fillStyle = 'rgba(255, 165, 2, 0.2)';
-                            ctx.fillRect(x, y, cellSize, cellSize);
+                            targetCtx.fillStyle = 'rgba(255, 165, 2, 0.2)';
+                            targetCtx.fillRect(x, y, cellSize, cellSize);
                         }
                     }
                 }
@@ -803,21 +824,21 @@
                     for (let k = 0; k < routes.length; k++) {
                         if (selectedRobot >= 0 && k !== selectedRobot) continue;
                         const color = COLORS[k % COLORS.length];
-                        const start = Math.max(0, animStep - trailLen);
-                        ctx.strokeStyle = color;
-                        ctx.lineWidth = 2;
-                        ctx.globalAlpha = 0.5;
-                        ctx.beginPath();
+                        const start = Math.max(0, step - trailLen);
+                        targetCtx.strokeStyle = color;
+                        targetCtx.lineWidth = 2;
+                        targetCtx.globalAlpha = 0.5;
+                        targetCtx.beginPath();
                         let first = true;
-                        for (let t = start; t <= animStep; t++) {
+                        for (let t = start; t <= step; t++) {
                             const pos = getRobotPosAtStep(routes[k], t);
                             const cx = offsetX + pos[1] * cellSize + cellSize / 2;
                             const cy = offsetY + pos[0] * cellSize + cellSize / 2;
-                            if (first) { ctx.moveTo(cx, cy); first = false; }
-                            else ctx.lineTo(cx, cy);
+                            if (first) { targetCtx.moveTo(cx, cy); first = false; }
+                            else targetCtx.lineTo(cx, cy);
                         }
-                        ctx.stroke();
-                        ctx.globalAlpha = 1.0;
+                        targetCtx.stroke();
+                        targetCtx.globalAlpha = 1.0;
                     }
                 } else {
                     for (let k = 0; k < routes.length; k++) {
@@ -825,19 +846,19 @@
                         const color = COLORS[k % COLORS.length];
                         const tail = routes[k].tail;
                         if (tail.length > 1) {
-                            ctx.strokeStyle = color;
-                            ctx.lineWidth = 1.5;
-                            ctx.globalAlpha = 0.5;
-                            ctx.beginPath();
+                            targetCtx.strokeStyle = color;
+                            targetCtx.lineWidth = 1.5;
+                            targetCtx.globalAlpha = 0.5;
+                            targetCtx.beginPath();
                             for (let t = 0; t < tail.length; t++) {
                                 const [ci, cj] = tail[t];
                                 const cx = offsetX + cj * cellSize + cellSize / 2;
                                 const cy = offsetY + ci * cellSize + cellSize / 2;
-                                if (t === 0) ctx.moveTo(cx, cy);
-                                else ctx.lineTo(cx, cy);
+                                if (t === 0) targetCtx.moveTo(cx, cy);
+                                else targetCtx.lineTo(cx, cy);
                             }
-                            ctx.stroke();
-                            ctx.globalAlpha = 1.0;
+                            targetCtx.stroke();
+                            targetCtx.globalAlpha = 1.0;
                         }
                     }
                 }
@@ -857,12 +878,12 @@
                         const x = offsetX + (j + 1) * cellSize;
                         const y1 = offsetY + i * cellSize;
                         const y2 = offsetY + (i + 1) * cellSize;
-                        ctx.strokeStyle = isOriginal ? '#e94560' : '#70a1ff';
-                        ctx.lineWidth = isOriginal ? wallWidth : wallWidth;
-                        ctx.beginPath();
-                        ctx.moveTo(x, y1);
-                        ctx.lineTo(x, y2);
-                        ctx.stroke();
+                        targetCtx.strokeStyle = isOriginal ? '#e94560' : '#70a1ff';
+                        targetCtx.lineWidth = wallWidth;
+                        targetCtx.beginPath();
+                        targetCtx.moveTo(x, y1);
+                        targetCtx.lineTo(x, y2);
+                        targetCtx.stroke();
                     }
                 }
             }
@@ -878,20 +899,20 @@
                         const y = offsetY + (i + 1) * cellSize;
                         const x1 = offsetX + j * cellSize;
                         const x2 = offsetX + (j + 1) * cellSize;
-                        ctx.strokeStyle = isOriginal ? '#e94560' : '#70a1ff';
-                        ctx.lineWidth = wallWidth;
-                        ctx.beginPath();
-                        ctx.moveTo(x1, y);
-                        ctx.lineTo(x2, y);
-                        ctx.stroke();
+                        targetCtx.strokeStyle = isOriginal ? '#e94560' : '#70a1ff';
+                        targetCtx.lineWidth = wallWidth;
+                        targetCtx.beginPath();
+                        targetCtx.moveTo(x1, y);
+                        targetCtx.lineTo(x2, y);
+                        targetCtx.stroke();
                     }
                 }
             }
 
             // Draw outer boundary
-            ctx.strokeStyle = '#e94560';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(offsetX, offsetY, n * cellSize, n * cellSize);
+            targetCtx.strokeStyle = '#e94560';
+            targetCtx.lineWidth = 4;
+            targetCtx.strokeRect(offsetX, offsetY, n * cellSize, n * cellSize);
 
             // Draw robots
             if (isAnimMode && currentScoreData && currentScoreData.routes) {
@@ -899,23 +920,23 @@
                 const routes = currentScoreData.routes;
                 for (let k = 0; k < routes.length; k++) {
                     if (selectedRobot >= 0 && k !== selectedRobot) continue;
-                    const pos = getRobotPosAtStep(routes[k], animStep);
+                    const pos = getRobotPosAtStep(routes[k], step);
                     const cx = offsetX + pos[1] * cellSize + cellSize / 2;
                     const cy = offsetY + pos[0] * cellSize + cellSize / 2;
                     const color = COLORS[k % COLORS.length];
 
-                    ctx.fillStyle = color;
-                    ctx.globalAlpha = 0.9;
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, cellSize * 0.35, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.globalAlpha = 1.0;
+                    targetCtx.fillStyle = color;
+                    targetCtx.globalAlpha = 0.9;
+                    targetCtx.beginPath();
+                    targetCtx.arc(cx, cy, cellSize * 0.35, 0, Math.PI * 2);
+                    targetCtx.fill();
+                    targetCtx.globalAlpha = 1.0;
 
-                    ctx.fillStyle = '#fff';
-                    ctx.font = `${Math.floor(cellSize * 0.3)}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(k.toString(), cx, cy);
+                    targetCtx.fillStyle = '#fff';
+                    targetCtx.font = `${Math.floor(cellSize * 0.3)}px sans-serif`;
+                    targetCtx.textAlign = 'center';
+                    targetCtx.textBaseline = 'middle';
+                    targetCtx.fillText(k.toString(), cx, cy);
                 }
             } else if (currentScoreData && currentScoreData.robots && showRobots) {
                 // Static mode: show robots at initial positions
@@ -928,33 +949,40 @@
                     const cy = offsetY + r.i * cellSize + cellSize / 2;
                     const color = COLORS[k % COLORS.length];
 
-                    ctx.fillStyle = color;
-                    ctx.globalAlpha = 0.8;
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, cellSize * 0.3, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.globalAlpha = 1.0;
+                    targetCtx.fillStyle = color;
+                    targetCtx.globalAlpha = 0.8;
+                    targetCtx.beginPath();
+                    targetCtx.arc(cx, cy, cellSize * 0.3, 0, Math.PI * 2);
+                    targetCtx.fill();
+                    targetCtx.globalAlpha = 1.0;
 
-                    ctx.fillStyle = '#fff';
-                    ctx.font = `${Math.floor(cellSize * 0.45)}px sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText(dirArrows[r.d], cx, cy);
+                    targetCtx.fillStyle = '#fff';
+                    targetCtx.font = `${Math.floor(cellSize * 0.45)}px sans-serif`;
+                    targetCtx.textAlign = 'center';
+                    targetCtx.textBaseline = 'middle';
+                    targetCtx.fillText(dirArrows[r.d], cx, cy);
                 }
             }
 
             // Draw grid coordinates
-            ctx.fillStyle = '#666';
-            ctx.font = '10px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            targetCtx.fillStyle = '#666';
+            targetCtx.font = '10px sans-serif';
+            targetCtx.textAlign = 'center';
+            targetCtx.textBaseline = 'middle';
             for (let j = 0; j < n; j++) {
-                ctx.fillText(j.toString(), offsetX + j * cellSize + cellSize / 2, offsetY - 12);
+                targetCtx.fillText(j.toString(), offsetX + j * cellSize + cellSize / 2, offsetY - 12);
             }
             for (let i = 0; i < n; i++) {
-                ctx.textAlign = 'right';
-                ctx.fillText(i.toString(), offsetX - 6, offsetY + i * cellSize + cellSize / 2);
+                targetCtx.textAlign = 'right';
+                targetCtx.fillText(i.toString(), offsetX - 6, offsetY + i * cellSize + cellSize / 2);
             }
+        }
+
+        function draw() {
+            const canvas = getCanvas();
+            if (!currentInputData) { clearCanvas(); return; }
+            const isAnim = (animStep > 0 || animPlaying || forceAnimationRender) && currentScoreData && currentScoreData.routes;
+            drawFrameToCtx(canvas.getContext('2d'), canvas.width, canvas.height, isAnim ? animStep : null);
         }
 
         // ============================================================
@@ -1086,6 +1114,187 @@
             if (animStep > 0) animStep--;
             updateAnimUI();
             draw();
+        }
+
+        function downloadBlob(blob, fileName) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }
+
+        async function transcodeMp4ForSlides(blob) {
+            const resp = await fetch('/api/transcode-mp4', {
+                method: 'POST',
+                headers: { 'Content-Type': 'video/mp4' },
+                body: blob
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                throw new Error(errText || `HTTP ${resp.status}`);
+            }
+            return await resp.blob();
+        }
+
+        function getMp4FileName() {
+            const seed = document.getElementById('seed-input').value || 'unknown';
+            const problem = document.getElementById('problem-select').value || 'A';
+            return `visualizer_${problem}_seed${seed}.mp4`;
+        }
+
+        async function getSupportedMp4EncoderConfig(width, height, bitrate, framerate) {
+            const candidates = [
+                'avc1.42E01E',
+                'avc1.42001f',
+                'avc1.4d401f',
+                'avc1.640028'
+            ];
+            for (const codec of candidates) {
+                const configsToTry = [
+                    {
+                        codec,
+                        width,
+                        height,
+                        bitrate,
+                        framerate,
+                        avc: { format: 'avc' },
+                        bitrateMode: 'constant'
+                    },
+                    {
+                        codec,
+                        width,
+                        height,
+                        bitrate,
+                        framerate
+                    }
+                ];
+                for (const config of configsToTry) {
+                    try {
+                        const support = await VideoEncoder.isConfigSupported(config);
+                        if (support.supported) {
+                            return support.config;
+                        }
+                    } catch (e) {
+                    }
+                }
+            }
+            return null;
+        }
+
+        async function exportMp4() {
+            if (!currentScoreData || !currentScoreData.routes || currentScoreData.routes.length === 0) {
+                setStatus('error', 'MP4保存には有効なスコア結果が必要です');
+                return;
+            }
+            if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
+                setStatus('error', 'このブラウザはMP4エンコードに必要なWebCodecs APIに対応していません');
+                return;
+            }
+            if (typeof Mp4Muxer === 'undefined') {
+                setStatus('error', 'MP4ライブラリの読み込みに失敗しました');
+                return;
+            }
+
+            const maxStep = getAnimMaxStep();
+            const frameSteps = Array.from({ length: maxStep + 1 }, (_, idx) => idx);
+            const fps = Math.max(1, animSpeed);
+            const frameDurationUs = Math.round(1_000_000 / fps);
+
+            const canvas = getCanvas();
+            const qualityMode = document.getElementById('video-quality').value;
+            const exportWidth = canvas.width - (canvas.width % 2);
+            const exportHeight = canvas.height - (canvas.height % 2);
+            // Offscreen canvas: renders frames independently of the main display
+            const offCanvas = document.createElement('canvas');
+            offCanvas.width = exportWidth;
+            offCanvas.height = exportHeight;
+            const offCtx = offCanvas.getContext('2d');
+            const btn = document.getElementById('export-mp4-btn');
+            const bitrateByQuality = {
+                high: 12_000_000,
+                standard: 6_000_000,
+                compact: 3_000_000,
+            };
+            const bitrate = bitrateByQuality[qualityMode] || bitrateByQuality.standard;
+            const encoderConfig = await getSupportedMp4EncoderConfig(exportWidth, exportHeight, bitrate, fps);
+
+            if (!encoderConfig) {
+                setStatus('error', 'このブラウザではH.264 MP4エンコードを利用できません');
+                return;
+            }
+
+            btn.disabled = true;
+            setStatus('info', `MP4生成中... 0/${frameSteps.length}`);
+
+            let encoder = null;
+            try {
+                const muxer = new Mp4Muxer.Muxer({
+                    target: new Mp4Muxer.ArrayBufferTarget(),
+                    video: {
+                        codec: 'avc',
+                        width: exportWidth,
+                        height: exportHeight,
+                        frameRate: fps,
+                    },
+                    fastStart: 'in-memory'
+                });
+
+                let encoderFailure = null;
+
+                encoder = new VideoEncoder({
+                    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                    error: (e) => { encoderFailure = e; }
+                });
+                encoder.configure(encoderConfig);
+
+                const keyFrameInterval = Math.max(1, Math.round(fps * 2));
+                for (let idx = 0; idx < frameSteps.length; idx++) {
+                    // Keep the encoder queue short to avoid unstable output on long videos.
+                    while (encoder.encodeQueueSize > 4) {
+                        await new Promise((resolve) => setTimeout(resolve, 0));
+                        if (encoderFailure) {
+                            throw encoderFailure;
+                        }
+                    }
+
+                    // Render directly to offscreen canvas without touching global state
+                    drawFrameToCtx(offCtx, exportWidth, exportHeight, frameSteps[idx]);
+
+                    const frame = new VideoFrame(offCanvas, {
+                        timestamp: idx * frameDurationUs,
+                        duration: frameDurationUs,
+                    });
+                    encoder.encode(frame, { keyFrame: idx === 0 || idx % keyFrameInterval === 0 });
+                    frame.close();
+
+                    if ((idx + 1) % 20 === 0 || idx + 1 === frameSteps.length) {
+                        setStatus('info', `MP4生成中... ${idx + 1}/${frameSteps.length}`);
+                    }
+                }
+
+                await encoder.flush();
+                if (encoderFailure) {
+                    throw encoderFailure;
+                }
+                muxer.finalize();
+                const rawBlob = new Blob([muxer.target.buffer], { type: 'video/mp4' });
+
+                btn.disabled = false;
+                downloadBlob(rawBlob, getMp4FileName());
+                const sizeMB = (rawBlob.size / (1024 * 1024)).toFixed(2);
+                setStatus('success', `MP4保存完了 (${frameSteps.length} frames, ${sizeMB} MB)`);
+            } catch (e) {
+                btn.disabled = false;
+                setStatus('error', 'MP4生成に失敗: ' + e.message);
+            } finally {
+                if (encoder && encoder.state !== 'closed') {
+                    encoder.close();
+                }
+            }
         }
 
         document.getElementById('anim-play').addEventListener('click', animTogglePlay);
