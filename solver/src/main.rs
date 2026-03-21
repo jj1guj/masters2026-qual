@@ -752,7 +752,7 @@ impl Solver {
         &self,
         adj: &Vec<Vec<usize>>,
         current: usize,
-        visited: &mut [bool; MAX_N * MAX_N],
+        mut visited: &mut [bool; MAX_N * MAX_N],
         path: &mut Vec<usize>,
         visited_count: usize,
         seed: &mut u64,
