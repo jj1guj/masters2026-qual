@@ -5,43 +5,64 @@ const K: usize = MAX_N * MAX_N;
 const DX: [i32; 4] = [-1, 0, 0, 1];
 const DY: [i32; 4] = [0, -1, 1, 0];
 
-/// 6-state snake automaton
-const SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
-    (0, 0, 1, 1),
-    (0, 2, 1, 2),
-    (1, 3, 1, 3),
-    (0, 3, 2, 4),
-    (0, 5, 2, 5),
-    (2, 0, 2, 0),
+/// Best 6-state automata set (from best_autoset.txt)
+const AUTO_0: [(u8, usize, u8, usize); 6] = [
+    (2, 2, 1, 5),
+    (0, 5, 2, 0),
+    (0, 4, 1, 5),
+    (0, 1, 2, 0),
+    (0, 3, 2, 3),
+    (1, 1, 1, 1),
 ];
 
-/// 6-state reverse snake automaton (mirror: swaps R<->L)
-const REVERSE_SNAKE_AUTOMATON: [(u8, usize, u8, usize); 6] = [
-    (0, 0, 2, 1),
-    (0, 2, 2, 2),
+const AUTO_1: [(u8, usize, u8, usize); 6] = [
+    (1, 2, 1, 3),
+    (2, 3, 1, 5),
+    (0, 1, 2, 3),
+    (0, 0, 2, 5),
+    (1, 2, 2, 4),
+    (0, 1, 1, 4),
+];
+
+const AUTO_2: [(u8, usize, u8, usize); 6] = [
+    (1, 1, 2, 0),
+    (0, 4, 1, 1),
+    (0, 5, 1, 2),
+    (1, 5, 1, 5),
+    (2, 2, 1, 3),
+    (1, 1, 2, 2),
+];
+
+const AUTO_3: [(u8, usize, u8, usize); 6] = [
+    (0, 0, 1, 3),
     (2, 3, 2, 3),
-    (0, 3, 1, 4),
-    (0, 5, 1, 5),
+    (1, 5, 1, 5),
+    (0, 1, 1, 2),
     (1, 0, 1, 0),
+    (0, 5, 1, 4),
 ];
 
-/// 2-state automaton A
-const AUTO_2S_A: [(u8, usize, u8, usize); 2] = [(2, 1, 1, 1), (0, 0, 2, 1)];
-/// Mirror of 2S_A
-const AUTO_2S_B: [(u8, usize, u8, usize); 2] = [(0, 1, 2, 0), (2, 0, 1, 0)];
+const AUTO_4: [(u8, usize, u8, usize); 6] = [
+    (1, 1, 1, 3),
+    (0, 5, 2, 4),
+    (2, 0, 2, 4),
+    (0, 0, 1, 1),
+    (1, 4, 2, 2),
+    (2, 3, 2, 3),
+];
 
-/// 2-state automaton C
-const AUTO_2S_C: [(u8, usize, u8, usize); 2] = [(1, 1, 2, 1), (0, 0, 1, 1)];
-/// Mirror of 2S_C
-const AUTO_2S_D: [(u8, usize, u8, usize); 2] = [(0, 1, 1, 0), (1, 0, 2, 0)];
+const AUTO_5: [(u8, usize, u8, usize); 6] = [
+    (2, 1, 1, 5),
+    (1, 3, 2, 3),
+    (1, 4, 1, 5),
+    (2, 2, 1, 4),
+    (0, 3, 1, 1),
+    (0, 2, 2, 2),
+];
 
-/// 3-state automaton A
-const AUTO_3S_A: [(u8, usize, u8, usize); 3] = [(1, 1, 2, 2), (2, 2, 2, 1), (0, 0, 1, 2)];
-/// Mirror of 3S_A
-const AUTO_3S_B: [(u8, usize, u8, usize); 3] = [(2, 1, 1, 2), (1, 2, 1, 1), (0, 0, 2, 2)];
-
-/// 5-state generic corridor automaton
-const CORRIDOR_AUTOMATON: [(u8, usize, u8, usize); 5] = [
+/// Wall-follow style patrol automaton.
+/// Base behavior is go forward; when blocked, rotate through alternatives.
+const WALL_FOLLOW_AUTOMATON: [(u8, usize, u8, usize); 5] = [
     (0, 0, 1, 1),
     (0, 0, 2, 2),
     (0, 0, 2, 3),
@@ -54,21 +75,17 @@ struct AutomatonDef {
     table: &'static [(u8, usize, u8, usize)],
 }
 
-const AUTOMATA: [AutomatonDef; 9] = [
+const WALL_FOLLOW_AUTOMATON_IDX: usize = 6;
+
+const AUTOMATA: [AutomatonDef; 7] = [
+    AutomatonDef { table: &AUTO_0 },
+    AutomatonDef { table: &AUTO_1 },
+    AutomatonDef { table: &AUTO_2 },
+    AutomatonDef { table: &AUTO_3 },
+    AutomatonDef { table: &AUTO_4 },
+    AutomatonDef { table: &AUTO_5 },
     AutomatonDef {
-        table: &SNAKE_AUTOMATON,
-    },
-    AutomatonDef {
-        table: &REVERSE_SNAKE_AUTOMATON,
-    },
-    AutomatonDef { table: &AUTO_2S_A },
-    AutomatonDef { table: &AUTO_2S_B },
-    AutomatonDef { table: &AUTO_2S_C },
-    AutomatonDef { table: &AUTO_2S_D },
-    AutomatonDef { table: &AUTO_3S_A },
-    AutomatonDef { table: &AUTO_3S_B },
-    AutomatonDef {
-        table: &CORRIDOR_AUTOMATON,
+        table: &WALL_FOLLOW_AUTOMATON,
     },
 ];
 
@@ -617,7 +634,8 @@ impl Solver {
                     board_h[i][j] = false;
                 }
 
-                if let Some(new_dir) = self.find_valid_dir_on_board(start, auto_idx, &board_v, &board_h)
+                if let Some(new_dir) =
+                    self.find_valid_dir_on_board(start, auto_idx, &board_v, &board_h)
                 {
                     best_dir = new_dir;
                     improved = true;
@@ -787,15 +805,7 @@ impl Solver {
             path.push(nxt);
 
             if self.prune_unvisited_connected(adj, visited, visited_count + 1)
-                && self.dfs_hamilton(
-                    adj,
-                    nxt,
-                    visited,
-                    path,
-                    visited_count + 1,
-                    seed,
-                    deadline,
-                )
+                && self.dfs_hamilton(adj, nxt, visited, path, visited_count + 1, seed, deadline)
             {
                 return true;
             }
@@ -831,11 +841,19 @@ impl Solver {
 
             Self::shuffle_vec(&mut candidates, seed);
             candidates.sort_by_key(|&to| {
-                let onward = adj[to].iter().filter(|&&n2| !visited[n2] && n2 != current).count();
+                let onward = adj[to]
+                    .iter()
+                    .filter(|&&n2| !visited[n2] && n2 != current)
+                    .count();
                 let second = adj[to]
                     .iter()
                     .filter(|&&n2| !visited[n2] && n2 != current)
-                    .map(|&n2| adj[n2].iter().filter(|&&n3| !visited[n3] && n3 != to).count())
+                    .map(|&n2| {
+                        adj[n2]
+                            .iter()
+                            .filter(|&&n3| !visited[n3] && n3 != to)
+                            .count()
+                    })
                     .min()
                     .unwrap_or(usize::MAX);
                 (onward, second)
@@ -852,9 +870,7 @@ impl Solver {
 
     fn find_hamilton_path(&self, deadline: std::time::Instant) -> Option<Vec<(usize, usize)>> {
         let adj = self.build_open_graph();
-        let mut starts: Vec<usize> = (0..MAX_N * MAX_N)
-            .filter(|&u| !adj[u].is_empty())
-            .collect();
+        let mut starts: Vec<usize> = (0..MAX_N * MAX_N).filter(|&u| !adj[u].is_empty()).collect();
         if starts.is_empty() {
             return None;
         }
@@ -910,24 +926,14 @@ impl Solver {
                     break 'outer;
                 }
 
-                let mut seed = seed_base
-                    ^ ((s as u64) << 32)
-                    ^ ((rank as u64) << 8)
-                    ^ (attempt as u64);
+                let mut seed =
+                    seed_base ^ ((s as u64) << 32) ^ ((rank as u64) << 8) ^ (attempt as u64);
 
                 let mut visited = [false; MAX_N * MAX_N];
                 visited[s] = true;
                 let mut path = vec![s];
 
-                if self.dfs_hamilton(
-                    &adj,
-                    s,
-                    &mut visited,
-                    &mut path,
-                    1,
-                    &mut seed,
-                    deadline,
-                ) {
+                if self.dfs_hamilton(&adj, s, &mut visited, &mut path, 1, &mut seed, deadline) {
                     let route = path.into_iter().map(Self::idx_cell).collect::<Vec<_>>();
                     return Some(route);
                 }
@@ -1006,7 +1012,7 @@ impl Solver {
         let (v_out, h_out) = self.build_walls_for_route(&route);
 
         let start = route[0];
-        let corridor_idx = AUTOMATA.len() - 1;
+        let corridor_idx = WALL_FOLLOW_AUTOMATON_IDX;
 
         let mut board_v = self.v;
         let mut board_h = self.h;
