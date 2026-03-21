@@ -1,3 +1,4 @@
+use actix_files::Files;
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -699,10 +700,12 @@ async fn generate_input(req: web::Json<GenerateRequest>) -> impl Responder {
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     let port = 8088;
+    let static_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("static");
     println!("Visualizer running at http://localhost:{}", port);
 
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
+            .service(Files::new("/static", static_dir.clone()))
             .route("/", web::get().to(index))
             .route("/api/run-solver", web::post().to(run_solver))
             .route("/api/score", web::post().to(calculate_score))

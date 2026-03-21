@@ -12,7 +12,7 @@ answers_dir = "./results/answers"
 # Tester binary configuration (runs test cases)
 # tester runs the solver internally: tester <solver_command> < input_file
 [tester]
-command = "cargo run -r --manifest-path=./solver/Cargo.toml"
+command = "cargo run -r --bin solver --manifest-path=./solver/Cargo.toml"
 
 [scorer]
 # Optional: Use a separate scoring command instead of parsing score from solver's stderr.
